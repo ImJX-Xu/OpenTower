@@ -1,59 +1,68 @@
-# OpenTower V3.0 — Agent OS Configuration
-# This single file defines everything: agent behavior, skills, channels, schedule.
+# OpenTower V3.1 — Agent OS Configuration
+# Agent behavior, skills, channels, heartbeat — all in one file.
 
 agent:
   name: "OpenTower"
-  version: "3.0"
+  version: "3.1"
 
-  # System prompt — defines the agent's personality and decision-making
   system_prompt: |
     你是 OpenTower，一个自主运行的 Agent 操作系统。
-    你可以执行 shell 命令、操作文件、浏览网页、发送邮件。
+    你可以执行 shell 命令、浏览网页、查询数据、调用 API、操作文件。
 
     行动原则：
-    1. 分析用户意图，拆解为可执行的原子步骤
-    2. 依次执行每个步骤，使用可用的 skills
-    3. 检查执行结果，如有问题则自动修正
+    1. 分析用户意图，选择最合适的 skill
+    2. 执行 skill，检查结果
+    3. 如需多步，逐步执行，每步反思
     4. 汇总结果，简洁回报
 
     你可以使用的 skills 列在工具列表中。
     选择最合适的 skill 执行任务。如果没有合适的 skill，用 shell 执行。
+    始终用与用户相同的语言回复。
 
-  # LLM Configuration
   llm:
-    base_url: ${OPENAI_BASE_URL:-http://localhost:1234/v1}
+    base_url: ${OPENAI_BASE_URL:-http://ai-5090:8000/v1}
     api_key: ${OPENAI_API_KEY:-no-key}
-    model: ${LLM_MODEL:-default}
+    model: ${LLM_MODEL:-qwen35}
     max_tokens: 2048
     temperature: 0.3
 
-  # Memory
   memory:
     backend: sqlite
     path: opentower.db
-    max_history: 50        # per-conversation memory depth
+    max_history: 50
 
 # ── Skills ──────────────────────────────────────────────────────
-# Each skill is a capability the agent can invoke.
-# Types: python (local .py), cli (subprocess), mcp (MCP server)
 skills:
+  # P0: Top high-frequency skills (60%+ of agent calls)
   - name: shell
     type: python
     module: opentower.skills.shell
     description: "Execute shell commands"
-    enabled: true
 
   - name: filesystem
     type: python
     module: opentower.skills.filesystem
     description: "Read, write, list files and directories"
-    enabled: true
 
   - name: python_exec
     type: python
     module: opentower.skills.python_exec
     description: "Execute Python code snippets"
-    enabled: true
+
+  - name: browser
+    type: python
+    module: opentower.skills.browser
+    description: "Browse web pages and search the internet"
+
+  - name: data_query
+    type: python
+    module: opentower.skills.data_query
+    description: "Query CSV/SQLite data with SQL"
+
+  - name: http_api
+    type: python
+    module: opentower.skills.http_api
+    description: "Make HTTP API requests and send webhooks"
 
   # MCP servers (uncomment to enable)
   # - name: github
@@ -63,30 +72,27 @@ skills:
   #     GITHUB_TOKEN: ${GITHUB_TOKEN}
 
 # ── Channels ───────────────────────────────────────────────────
-# How users interact with the agent.
 channels:
   - type: cli
     enabled: true
-
-  # - type: telegram
-  #   token: ${TELEGRAM_BOT_TOKEN}
-  #   enabled: false
 
   - type: webhook
     port: 8080
     enabled: false
 
+# ── MCP Server ─────────────────────────────────────────────────
+# Expose OpenTower's skills to other agents via MCP protocol
+# mcp_server:
+#   enabled: false
+#   transport: stdio  # or http
+#   port: 3100
+
 # ── Heartbeat & Scheduler ─────────────────────────────────────
-# Agent wakes up periodically to check tasks and run scheduled jobs.
 heartbeat:
   enabled: true
-  interval: 300            # seconds between heartbeats (5 min)
+  interval: 300
   on_wake:
     - check_pending_tasks
     - run_scheduled_jobs
 
 schedules: []
-  # - cron: "0 9 * * *"
-  #   action: "Review yesterday's completed tasks and plan today"
-  # - cron: "*/30 * * * *"
-  #   action: "Check for any urgent pending tasks"

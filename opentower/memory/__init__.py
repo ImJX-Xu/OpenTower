@@ -1,11 +1,9 @@
-"""Memory package (V2.0).
+"""Memory package (V3.0).
 
 Exports:
-    StateWall    — global audit log (all packets)
-    NodeMemory   — per-node scoped memory
+    NodeMemory — per-agent scoped memory with auto-trim.
 """
 
-from .state_wall import StateWall
 from .node_memory import NodeMemory
 
-__all__ = ["StateWall", "NodeMemory"]
+__all__ = ["NodeMemory"]

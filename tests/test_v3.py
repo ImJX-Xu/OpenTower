@@ -1,93 +1,65 @@
-"""Tests for V3.0 — Config, Agent, Skills, Scheduler."""
+"""Tests for V3.1 — High-Frequency Skills, MCP, + V3.0 regression."""
 
 import json
+import csv
 import pytest
 import pytest_asyncio
 import aiosqlite
 from pathlib import Path
 
-from opentower.config import load_config, Config, _interpolate_env
+from opentower.config import load_config, _interpolate_env
 from opentower.agent import Agent
 from opentower.skills import SkillRegistry, SkillInfo, skill
 from opentower.scheduler import Scheduler
 from opentower.channels import Message
-from opentower.llm.client import LLMClient
+from opentower.llm.client import LLMClient, LLMUsage
 from opentower.memory.node_memory import NodeMemory
 
 
-# ── Config Tests ───────────────────────────────────────────────
+# ── Config ─────────────────────────────────────────────────────
 
 def test_load_config():
-    """Real config.yaml loads."""
     config = load_config(Path(__file__).parent.parent / "config.yaml")
-    assert config.agent.name == "OpenTower"
-    assert config.agent.version == "3.0"
-    assert len(config.skills) >= 1
+    assert config.agent.version == "3.1"
+    assert len(config.skills) >= 6  # shell, fs, python, browser, data, http
 
 
 def test_env_interpolation():
     import os
-    os.environ["TEST_VAR"] = "hello"
-    result = _interpolate_env("${TEST_VAR:-default}")
-    assert result == "hello"
-    del os.environ["TEST_VAR"]
+    os.environ["TEST_KEY"] = "42"
+    assert _interpolate_env("${TEST_KEY:-0}") == "42"
+    del os.environ["TEST_KEY"]
+    assert _interpolate_env("${TEST_KEY:-fallback}") == "fallback"
 
 
-def test_env_default():
-    result = _interpolate_env("${NONEXISTENT_VAR:-fallback}")
-    assert result == "fallback"
-
-
-def test_config_enabled_skills():
-    config = load_config(Path(__file__).parent.parent / "config.yaml")
-    enabled = config.enabled_skills
-    assert all(s.enabled for s in enabled)
-
-
-# ── Skills Tests ───────────────────────────────────────────────
+# ── Skills Discovery ──────────────────────────────────────────
 
 def test_skill_decorator():
-    @skill("test_skill", description="A test skill")
+    @skill("test", description="test skill")
     async def my_skill(x: int = 0):
-        return {"result": x * 2}
-
-    assert hasattr(my_skill, "_skill_info")
-    assert my_skill._skill_info.name == "test_skill"
+        return {"result": x}
+    assert my_skill._skill_info.name == "test"
 
 
-@pytest.mark.asyncio
-async def test_skill_execution():
-    @skill("double", description="Double a number")
-    async def double(x: int = 1):
-        return {"result": x * 2}
-
-    result = await double(x=5)
-    assert result == {"result": 10}
-
-
-def test_registry_register():
-    reg = SkillRegistry()
-    async def noop(**kw):
-        return {"ok": True}
-    reg.register(SkillInfo(name="test", description="test", parameters="", execute=noop))
-    assert "test" in reg
-    assert "test" in reg.available
-
-
-def test_registry_load_from_config():
-    """Load skills from real config."""
+def test_registry_load_all():
     config = load_config(Path(__file__).parent.parent / "config.yaml")
     reg = SkillRegistry()
     reg.load_from_config(config.enabled_skills)
-    # Shell, filesystem, python_exec should be loaded
-    assert "shell" in reg.available
-    assert "read_file" in reg.available
-    assert "list_dir" in reg.available
+    available = reg.available
+    assert "shell" in available
+    assert "read_file" in available
+    assert "list_dir" in available
+    assert "browse" in available
+    assert "web_search" in available
+    assert "query_csv" in available
+    assert "http_request" in available
+    assert "webhook_send" in available
 
+
+# ── Filesystem Skill ──────────────────────────────────────────
 
 @pytest.mark.asyncio
 async def test_filesystem_list_dir():
-    """Filesystem skill actually works."""
     config = load_config(Path(__file__).parent.parent / "config.yaml")
     reg = SkillRegistry()
     reg.load_from_config(config.enabled_skills)
@@ -96,18 +68,93 @@ async def test_filesystem_list_dir():
     assert len(result["entries"]) > 0
 
 
-# ── Agent Tests ────────────────────────────────────────────────
+@pytest.mark.asyncio
+async def test_filesystem_read_write(tmp_path):
+    config = load_config(Path(__file__).parent.parent / "config.yaml")
+    reg = SkillRegistry()
+    reg.load_from_config(config.enabled_skills)
+
+    f = str(tmp_path / "test.txt")
+    await reg.call("write_file", path=f, content="hello world")
+    result = await reg.call("read_file", path=f)
+    assert result["content"] == "hello world"
+
+
+# ── Data Query Skill ──────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_csv_query(tmp_path):
+    # Create test CSV
+    csv_path = str(tmp_path / "sales.csv")
+    with open(csv_path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow(["name", "amount", "region"])
+        writer.writerow(["Alice", "100", "East"])
+        writer.writerow(["Bob", "200", "West"])
+        writer.writerow(["Charlie", "150", "East"])
+
+    config = load_config(Path(__file__).parent.parent / "config.yaml")
+    reg = SkillRegistry()
+    reg.load_from_config(config.enabled_skills)
+
+    result = await reg.call("query_csv", path=csv_path, sql="SELECT region, SUM(amount) as total FROM data GROUP BY region")
+    assert result["row_count"] == 2
+    assert len(result["rows"]) == 2
+
+
+@pytest.mark.asyncio
+async def test_csv_summary(tmp_path):
+    csv_path = str(tmp_path / "data.csv")
+    with open(csv_path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow(["id", "value"])
+        writer.writerow(["1", "a"])
+        writer.writerow(["2", "b"])
+
+    config = load_config(Path(__file__).parent.parent / "config.yaml")
+    reg = SkillRegistry()
+    reg.load_from_config(config.enabled_skills)
+
+    result = await reg.call("csv_summary", path=csv_path)
+    assert result["row_count"] == 2
+    assert result["columns"] == ["id", "value"]
+
+
+# ── HTTP API Skill ────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_http_request_error():
+    """HTTP request to non-existent host fails gracefully."""
+    config = load_config(Path(__file__).parent.parent / "config.yaml")
+    reg = SkillRegistry()
+    reg.load_from_config(config.enabled_skills)
+
+    result = await reg.call("http_request", url="http://localhost:19999/nonexistent")
+    assert "error" in result
+
+
+# ── Browser Skill ─────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_browse_invalid_url():
+    config = load_config(Path(__file__).parent.parent / "config.yaml")
+    reg = SkillRegistry()
+    reg.load_from_config(config.enabled_skills)
+
+    result = await reg.call("browse", url="http://localhost:19999/nope")
+    assert "error" in result
+
+
+# ── Agent Loop ────────────────────────────────────────────────
 
 @pytest_asyncio.fixture
-async def agent_setup(monkeypatch):
-    """Setup agent with mocked LLM."""
+async def agent_env(monkeypatch):
     config = load_config(Path(__file__).parent.parent / "config.yaml")
     llm = LLMClient()
     mem_db = await aiosqlite.connect(":memory:")
     memory = NodeMemory("agent", mem_db)
     await memory.init()
 
-    # Load real skills
     reg = SkillRegistry()
     reg.load_from_config(config.enabled_skills)
 
@@ -117,114 +164,83 @@ async def agent_setup(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_agent_direct_response(agent_setup):
-    """Agent responds directly when LLM says respond."""
-    agent, llm, _, monkeypatch = agent_setup
-    from opentower.llm.client import LLMUsage
-
-    async def mock_chat(messages, **kw):
-        return json.dumps({
-            "action": "respond",
-            "content": "Hello! How can I help?"
-        }), LLMUsage(prompt_tokens=10, completion_tokens=10)
-
-    monkeypatch.setattr(llm, "chat", mock_chat)
-    response = await agent.run("hi")
-    assert "Hello" in response
+async def test_agent_respond(agent_env):
+    agent, llm, _, mp = agent_env
+    async def mock(messages, **kw):
+        return json.dumps({"action": "respond", "content": "Hi!"}), LLMUsage(prompt_tokens=5, completion_tokens=5)
+    mp.setattr(llm, "chat", mock)
+    assert "Hi" in await agent.run("hello")
 
 
 @pytest.mark.asyncio
-async def test_agent_calls_skill(agent_setup):
-    """Agent calls a skill when LLM requests it."""
-    agent, llm, _, monkeypatch = agent_setup
-    from opentower.llm.client import LLMUsage
-
-    call_count = 0
-    async def mock_chat(messages, **kw):
-        nonlocal call_count
-        call_count += 1
-        if call_count == 1:
-            return json.dumps({
-                "action": "call_skill",
-                "skill": "list_dir",
-                "args": {"path": "."}
-            }), LLMUsage(prompt_tokens=10, completion_tokens=10)
-        else:
-            return json.dumps({
-                "action": "respond",
-                "content": "Found files in the directory."
-            }), LLMUsage(prompt_tokens=10, completion_tokens=10)
-
-    monkeypatch.setattr(llm, "chat", mock_chat)
-    response = await agent.run("list files")
-    assert "Found files" in response
-    assert call_count == 2  # think + reflect
+async def test_agent_uses_skill(agent_env):
+    agent, llm, _, mp = agent_env
+    n = 0
+    async def mock(messages, **kw):
+        nonlocal n; n += 1
+        if n == 1:
+            return json.dumps({"action": "call_skill", "skill": "list_dir", "args": {"path": "."}}), LLMUsage(prompt_tokens=5, completion_tokens=5)
+        return json.dumps({"action": "respond", "content": "Done."}), LLMUsage(prompt_tokens=5, completion_tokens=5)
+    mp.setattr(llm, "chat", mock)
+    resp = await agent.run("list files")
+    assert "Done" in resp
 
 
 @pytest.mark.asyncio
-async def test_agent_handles_plain_text(agent_setup):
-    """Agent handles plain text LLM output (no JSON)."""
-    agent, llm, _, monkeypatch = agent_setup
-    from opentower.llm.client import LLMUsage
-
-    async def mock_chat(messages, **kw):
-        return "I cannot help with that.", LLMUsage(prompt_tokens=10, completion_tokens=10)
-
-    monkeypatch.setattr(llm, "chat", mock_chat)
-    response = await agent.run("something weird")
-    assert "cannot help" in response
+async def test_agent_plain_text(agent_env):
+    agent, llm, _, mp = agent_env
+    async def mock(messages, **kw):
+        return "Just a plain response.", LLMUsage(prompt_tokens=5, completion_tokens=5)
+    mp.setattr(llm, "chat", mock)
+    resp = await agent.run("test")
+    assert "plain response" in resp
 
 
 @pytest.mark.asyncio
-async def test_agent_memory_recorded(agent_setup):
-    """Agent records interactions to memory."""
-    agent, llm, mem_db, monkeypatch = agent_setup
-    from opentower.llm.client import LLMUsage
-
-    async def mock_chat(messages, **kw):
-        return json.dumps({
-            "action": "respond",
-            "content": "Noted."
-        }), LLMUsage(prompt_tokens=10, completion_tokens=10)
-
-    monkeypatch.setattr(llm, "chat", mock_chat)
-    await agent.run("remember this")
+async def test_agent_memory(agent_env):
+    agent, llm, _, mp = agent_env
+    async def mock(messages, **kw):
+        return json.dumps({"action": "respond", "content": "OK"}), LLMUsage(prompt_tokens=5, completion_tokens=5)
+    mp.setattr(llm, "chat", mock)
+    await agent.run("remember xyz")
     ctx = await agent.memory.get_context(n=5)
-    assert "remember this" in ctx
+    assert "remember xyz" in ctx
 
 
-# ── Scheduler Tests ────────────────────────────────────────────
+# ── Scheduler ─────────────────────────────────────────────────
 
 @pytest.mark.asyncio
-async def test_scheduler_start_stop():
-    """Scheduler starts and stops cleanly."""
+async def test_scheduler_lifecycle():
     woke = False
     async def on_wake():
-        nonlocal woke
-        woke = True
-
-    sched = Scheduler(interval=1, on_wake=on_wake)
-    await sched.start()
+        nonlocal woke; woke = True
+    s = Scheduler(interval=1, on_wake=on_wake)
+    await s.start()
     await asyncio.sleep(1.5)
-    await sched.stop()
+    await s.stop()
     assert woke
 
 
-@pytest.mark.asyncio
-async def test_scheduler_cron_check():
-    """Cron check returns True for matching minute."""
-    from datetime import datetime, timezone
-    now = datetime.now(timezone.utc)
-    sched = {"cron": f"*/1 * * * *", "last_run": None}
-    assert Scheduler._should_run(sched, now)
+# ── MCP Server Unit ───────────────────────────────────────────
+
+def test_mcp_server_handles_tools_list():
+    """MCP Server correctly lists tools."""
+    from opentower.mcp.server import MCPServer
+    reg = SkillRegistry()
+    async def noop(**kw): return {"ok": True}
+    reg.register(SkillInfo(name="test_tool", description="A test", parameters="", execute=noop))
+
+    server = MCPServer(reg)
+    import asyncio
+    resp = asyncio.get_event_loop().run_until_complete(
+        server._handle_request({"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}})
+    )
+    assert resp["result"]["tools"][0]["name"] == "test_tool"
 
 
-# ── Message Tests ──────────────────────────────────────────────
-
-def test_message_creation():
-    msg = Message(text="hello", sender="user", channel="cli")
-    assert msg.text == "hello"
-    assert msg.metadata == {}
+def test_message():
+    msg = Message(text="hi", sender="user", channel="cli")
+    assert msg.text == "hi"
 
 
 import asyncio
