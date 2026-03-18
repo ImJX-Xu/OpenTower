@@ -1,7 +1,10 @@
-"""Worker Agent — task execution via Action Registry.
+"""Worker Agent — task execution via Action Registry (V2.0).
 
-Listens for ``task_assign`` packets, looks up the action in the registry,
-executes it, and reports the result as ``task_result``.
+Listens for ``task_assign`` packets targeted at this node,
+looks up the action in the registry, executes it, and reports
+the result as ``task_result``.
+
+V2.0: Supports targeted routing (only processes packets addressed to this node).
 """
 
 from __future__ import annotations
@@ -32,11 +35,22 @@ class WorkerAgent(BaseAgent):
         self.bus.subscribe(INTENT_TASK_ASSIGN, self.handle)
 
     async def handle(self, packet: EMPPacket) -> None:
+        # Only process packets targeted at this node
+        if packet.target and packet.target != self.node_id:
+            return
+
         action_type = packet.payload.get("action_type", "")
         task_payload = packet.payload.get("task_payload", {})
         original_intent = packet.payload.get("original_intent", "")
 
-        logger.info("[Worker] Executing action: %s", action_type)
+        # If action_type is "delegate", this means the task was routed
+        # to a worker but it's a delegation task — use the intent as shell cmd
+        if action_type == "delegate":
+            intent = packet.payload.get("intent", packet.action)
+            action_type = "shell_execute"
+            task_payload = {"command": intent}
+
+        logger.info("[%s] Executing action: %s", self.node_id, action_type)
         await self.state.record(packet)
 
         try:
@@ -48,7 +62,7 @@ class WorkerAgent(BaseAgent):
         except Exception as exc:
             result = {"error": f"Unexpected error: {exc}"}
             status = "error"
-            logger.exception("[Worker] Action %s failed", action_type)
+            logger.exception("[%s] Action %s failed", self.node_id, action_type)
 
         # Report result back
         result_packet = EMPPacket(
@@ -63,6 +77,7 @@ class WorkerAgent(BaseAgent):
                 "original_intent": original_intent,
                 "task_index": packet.payload.get("task_index"),
                 "total_tasks": packet.payload.get("total_tasks"),
+                "chain": packet.payload.get("chain", []) + [self.node_id],
             },
             token_budget=packet.token_budget,
             parent_trace_id=packet.trace_id,

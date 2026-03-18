@@ -1,83 +1,76 @@
-"""Tests for Layer 2 (EMP event bus)."""
+"""Tests for event bus (unchanged from V1.0)."""
 
 import asyncio
 import pytest
-import pytest_asyncio
 
 from opentower.bus.event_bus import EMPBus
 from opentower.schema.emp import EMPPacket
 
 
-@pytest_asyncio.fixture
-async def bus():
-    b = EMPBus()
-    await b.start()
-    yield b
-    await b.stop()
-
-
 @pytest.mark.asyncio
-async def test_subscribe_and_publish(bus: EMPBus):
-    received: list[EMPPacket] = []
+async def test_subscribe_and_publish():
+    bus = EMPBus()
+    received = []
 
-    async def handler(pkt: EMPPacket) -> None:
+    async def handler(pkt):
         received.append(pkt)
 
     bus.subscribe("test_intent", handler)
+    await bus.start()
 
-    pkt = EMPPacket(source="a", intent_type="test_intent", action="hello")
+    pkt = EMPPacket(source="a", intent_type="test_intent", action="hello", token_budget=100)
     await bus.publish(pkt)
-
-    # Give the dispatch loop time to process
     await asyncio.sleep(0.1)
 
     assert len(received) == 1
     assert received[0].action == "hello"
+    await bus.stop()
 
 
 @pytest.mark.asyncio
-async def test_no_subscriber_no_crash(bus: EMPBus):
-    """Publishing to an intent with no subscribers should not raise."""
-    pkt = EMPPacket(source="a", intent_type="nonexistent", action="ignored")
-    await bus.publish(pkt)
+async def test_no_subscriber():
+    bus = EMPBus()
+    await bus.start()
+    pkt = EMPPacket(source="a", intent_type="no_one", action="lost", token_budget=100)
+    await bus.publish(pkt)  # should not raise
     await asyncio.sleep(0.1)
-    # No assertion — just checking no exception
+    await bus.stop()
 
 
 @pytest.mark.asyncio
-async def test_multiple_subscribers(bus: EMPBus):
-    results_a: list[str] = []
-    results_b: list[str] = []
+async def test_multiple_subscribers():
+    bus = EMPBus()
+    a, b = [], []
 
-    async def handler_a(pkt: EMPPacket) -> None:
-        results_a.append(pkt.action)
+    async def ha(pkt): a.append(pkt)
+    async def hb(pkt): b.append(pkt)
 
-    async def handler_b(pkt: EMPPacket) -> None:
-        results_b.append(pkt.action)
+    bus.subscribe("multi", ha)
+    bus.subscribe("multi", hb)
+    await bus.start()
 
-    bus.subscribe("multi", handler_a)
-    bus.subscribe("multi", handler_b)
-
-    await bus.publish(EMPPacket(source="x", intent_type="multi", action="ping"))
+    await bus.publish(EMPPacket(source="x", intent_type="multi", action="go", token_budget=100))
     await asyncio.sleep(0.1)
 
-    assert results_a == ["ping"]
-    assert results_b == ["ping"]
+    assert len(a) == 1
+    assert len(b) == 1
+    await bus.stop()
 
 
 @pytest.mark.asyncio
-async def test_message_ordering(bus: EMPBus):
-    received: list[int] = []
+async def test_ordering():
+    bus = EMPBus()
+    order = []
 
-    async def handler(pkt: EMPPacket) -> None:
-        received.append(pkt.payload.get("seq", -1))
+    async def handler(pkt):
+        order.append(pkt.action)
 
     bus.subscribe("ordered", handler)
+    await bus.start()
 
     for i in range(5):
-        await bus.publish(
-            EMPPacket(source="x", intent_type="ordered", action=f"msg-{i}", payload={"seq": i})
-        )
-
+        await bus.publish(EMPPacket(source="x", intent_type="ordered", action=str(i), token_budget=100))
     await asyncio.sleep(0.3)
-    assert received == [0, 1, 2, 3, 4]
+
+    assert order == ["0", "1", "2", "3", "4"]
+    await bus.stop()

@@ -1,19 +1,22 @@
-"""Base Agent — abstract foundation for all agent nodes.
+"""Base Agent — abstract foundation for all agent nodes (V2.0).
 
 Provides:
 - Config injection (role prompt, permissions, token budget)
 - Bus integration (subscribe + emit)
 - LLM call wrapper with automatic token accounting
-- State wall recording
+- Per-node memory (independent context for each agent)
+- Global state wall recording (audit log)
 """
 
 from __future__ import annotations
 
 import logging
 from abc import ABC, abstractmethod
+from typing import Optional
 
 from opentower.bus.event_bus import EMPBus
 from opentower.llm.client import LLMClient
+from opentower.memory.node_memory import NodeMemory
 from opentower.memory.state_wall import StateWall
 from opentower.schema.company import NodeConfig
 from opentower.schema.emp import EMPPacket
@@ -22,7 +25,7 @@ logger = logging.getLogger("opentower.agents")
 
 
 class BaseAgent(ABC):
-    """Abstract base class for all OpenTower agents."""
+    """Abstract base class for all OpenTower agents (V2.0)."""
 
     def __init__(
         self,
@@ -31,12 +34,16 @@ class BaseAgent(ABC):
         bus: EMPBus,
         llm: LLMClient,
         state: StateWall,
+        *,
+        memory: Optional[NodeMemory] = None,
+        **kwargs,
     ) -> None:
         self.node_id = node_id
         self.config = config
         self.bus = bus
         self.llm = llm
         self.state = state
+        self.memory = memory  # per-node scoped memory (V2.0)
         self.tokens_used = 0
 
     @abstractmethod
@@ -50,7 +57,9 @@ class BaseAgent(ABC):
         *,
         max_tokens: int = 1024,
     ) -> str:
-        """Call the LLM with token budget enforcement.
+        """Call the LLM with token budget enforcement and memory injection.
+
+        V2.0: Automatically injects per-node memory context before the prompt.
 
         Raises:
             RuntimeError: If the token budget is exceeded.
@@ -62,11 +71,23 @@ class BaseAgent(ABC):
                 f"({self.tokens_used}/{self.config.token_budget})"
             )
 
-        # Inject system prompt from config
-        full_messages = [
-            {"role": "system", "content": self.config.prompt},
-            *messages,
-        ]
+        # Build full message chain
+        full_messages = []
+
+        # 1. System prompt from config
+        full_messages.append({"role": "system", "content": self.config.prompt})
+
+        # 2. Inject per-node memory context (V2.0)
+        if self.memory:
+            context = await self.memory.get_context(n=5)
+            if context:
+                full_messages.append({
+                    "role": "system",
+                    "content": f"你的近期工作记忆（仅供上下文参考）：\n{context}",
+                })
+
+        # 3. User messages
+        full_messages.extend(messages)
 
         effective_max = min(max_tokens, remaining)
         text, usage = await self.llm.chat(full_messages, max_tokens=effective_max)
@@ -79,6 +100,12 @@ class BaseAgent(ABC):
             self.tokens_used,
             self.config.token_budget,
         )
+
+        # Record in per-node memory
+        if self.memory:
+            await self.memory.record("input", messages[-1].get("content", "")[:500])
+            await self.memory.record("output", text[:500])
+
         return text
 
     async def emit(self, packet: EMPPacket) -> None:

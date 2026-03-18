@@ -80,10 +80,11 @@ class QAAgent(BaseAgent):
 
         # ── If REJECT, optionally retry ────────────────────────────
         if verdict == "REJECT":
-            root_trace = packet.parent_trace_id or packet.trace_id
-            retries = self._retry_counts.get(root_trace, 0)
+            # Use original_intent as retry key (trace_ids change per retry)
+            intent_key = packet.payload.get("original_intent", packet.trace_id)
+            retries = self._retry_counts.get(intent_key, 0)
             if retries < _MAX_RETRIES:
-                self._retry_counts[root_trace] = retries + 1
+                self._retry_counts[intent_key] = retries + 1
                 logger.info(
                     "[QA] REJECT — retrying (%d/%d): %s",
                     retries + 1,
@@ -105,7 +106,7 @@ class QAAgent(BaseAgent):
                 )
                 await self.emit(retry_packet)
             else:
-                logger.warning("[QA] Max retries reached for trace %s", root_trace)
+                logger.warning("[QA] Max retries reached for intent: %s", intent_key[:50])
 
     @staticmethod
     def _static_check(status: str, result: dict) -> list[str]:
@@ -141,22 +142,37 @@ class QAAgent(BaseAgent):
 
     @staticmethod
     def _parse_verdict(raw: str) -> dict:
-        """Extract the verdict JSON from the LLM response."""
-        cleaned = re.sub(r"```(?:json)?\s*", "", raw).strip()
-        cleaned = re.sub(r"```\s*$", "", cleaned).strip()
-        try:
-            parsed = json.loads(cleaned)
-            if isinstance(parsed, dict) and "verdict" in parsed:
-                return parsed
-        except json.JSONDecodeError:
-            match = re.search(r"\{.*\}", cleaned, re.DOTALL)
-            if match:
-                try:
-                    parsed = json.loads(match.group())
-                    if "verdict" in parsed:
-                        return parsed
-                except json.JSONDecodeError:
-                    pass
-        # Default to approve if we can't parse
+        """Extract the verdict JSON from the LLM response.
+
+        Strategy:
+        1. Try to find all JSON objects in the raw output (including inside think tags)
+        2. Return the first one that contains a "verdict" key
+        3. Fall back to keyword scanning for APPROVE/REJECT
+        """
+        # Find all potential JSON objects in the raw text
+        for match in re.finditer(r"\{[^{}]*\}", raw):
+            try:
+                parsed = json.loads(match.group())
+                if "verdict" in parsed:
+                    return parsed
+            except json.JSONDecodeError:
+                continue
+
+        # Try nested JSON objects (with inner braces)
+        for match in re.finditer(r"\{[^}]*\{[^}]*\}[^}]*\}", raw):
+            try:
+                parsed = json.loads(match.group())
+                if "verdict" in parsed:
+                    return parsed
+            except json.JSONDecodeError:
+                continue
+
+        # Fall back to keyword scanning
+        raw_upper = raw.upper()
+        if "REJECT" in raw_upper:
+            return {"verdict": "REJECT", "reason": "LLM indicated rejection (parsed from text)"}
+        if "APPROVE" in raw_upper:
+            return {"verdict": "APPROVE", "reason": "LLM indicated approval (parsed from text)"}
+
         logger.warning("[QA] Could not parse verdict, defaulting to APPROVE: %.200s", raw)
         return {"verdict": "APPROVE", "reason": f"Auto-approved (unparseable LLM output): {raw[:100]}"}

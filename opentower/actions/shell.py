@@ -47,10 +47,17 @@ async def shell_execute(payload: dict[str, Any]) -> dict[str, Any]:
     logger.info("Shell executing: %s", command)
 
     try:
+        import os
+        env = {**os.environ, "PYTHONIOENCODING": "utf-8"}
+        # Force UTF-8 output on Windows
+        if os.name == "nt":
+            env["CHCP"] = "65001"
+            command = f"chcp 65001 >nul && {command}"
         proc = await asyncio.create_subprocess_shell(
             command,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            env=env,
         )
         stdout_bytes, stderr_bytes = await asyncio.wait_for(
             proc.communicate(), timeout=_TIMEOUT_SECONDS

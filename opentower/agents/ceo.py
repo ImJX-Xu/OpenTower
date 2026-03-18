@@ -85,8 +85,18 @@ class CEOAgent(BaseAgent):
     @staticmethod
     def _parse_tasks(raw: str) -> list[dict]:
         """Extract a JSON array from the LLM response, tolerating markdown fences."""
+        # Strip <think>...</think> reasoning tags (e.g. Qwen, DeepSeek)
+        # Handle both with and without closing tag
+        cleaned = re.sub(r"<think>.*?</think>", "", raw, flags=re.DOTALL).strip()
+        if cleaned.startswith("<think>"):
+            # No closing tag — strip everything up to last JSON-like content
+            idx = cleaned.find("[")
+            brace = cleaned.find("{")
+            if idx == -1 or (brace != -1 and brace < idx):
+                idx = brace
+            cleaned = cleaned[idx:] if idx != -1 else cleaned
         # Strip markdown code fences if present
-        cleaned = re.sub(r"```(?:json)?\s*", "", raw).strip()
+        cleaned = re.sub(r"```(?:json)?\s*", "", cleaned).strip()
         cleaned = re.sub(r"```\s*$", "", cleaned).strip()
 
         try:
