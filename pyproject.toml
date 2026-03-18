@@ -1,14 +1,14 @@
 [project]
 name = "opentower"
-version = "1.0.0"
-description = "OpenTower — 5-Layer Multi-Agent Architecture with Zero-Intervention Closed-Loop Rate"
+version = "3.0.0"
+description = "OpenTower — Agent OS. Autonomous runtime with Skills, Channels, and Heartbeat."
 readme = "README.md"
 license = {text = "MIT"}
 requires-python = ">=3.11"
 authors = [
     {name = "OpenTower Contributors"},
 ]
-keywords = ["multi-agent", "llm", "orchestration", "asyncio", "ai"]
+keywords = ["agent", "llm", "autonomous", "mcp", "skills", "runtime"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
@@ -31,10 +31,12 @@ Homepage = "https://github.com/EmpireTower/OpenTower"
 Repository = "https://github.com/EmpireTower/OpenTower"
 
 [project.scripts]
-opentower = "opentower.main:main"
+opentower = "opentower.runtime:main"
 
 [project.optional-dependencies]
 dev = ["pytest", "pytest-asyncio"]
+webhook = ["aiohttp>=3.9"]
+telegram = ["python-telegram-bot>=21.0"]
 
 [build-system]
 requires = ["setuptools>=68.0"]
@@ -43,5 +45,5 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools.packages.find]
 include = ["opentower*"]
 
-[tool.setuptools.package-data]
-opentower = ["../company.yaml"]
+[tool.pytest.ini_options]
+asyncio_mode = "auto"

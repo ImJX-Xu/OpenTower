@@ -1,3 +1,7 @@
-"""OpenTower — 5-Layer Multi-Agent Architecture."""
+"""OpenTower — Agent OS.
 
-__version__ = "1.0.0"
+A minimal, autonomous agent runtime.
+Skills + Channels + Heartbeat = Agent that works 24/7.
+"""
+
+__version__ = "3.0.0"
