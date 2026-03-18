@@ -80,6 +80,12 @@ channels:
     port: 8080
     enabled: false
 
+  - type: feishu
+    enabled: false
+    # app_id: ${FEISHU_APP_ID}
+    # app_secret: ${FEISHU_APP_SECRET}
+    # port: 9000
+
 # ── MCP Server ─────────────────────────────────────────────────
 # Expose OpenTower's skills to other agents via MCP protocol
 # mcp_server:

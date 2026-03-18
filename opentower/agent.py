@@ -237,9 +237,10 @@ class Agent:
             "步骤", "计划", "流程", "报告",  # Chinese: steps/plan/process/report
             " and then ", " step ",
         ]
-        long_enough = len(user_input) > 80
-        has_signals = any(s in user_input.lower() for s in complex_signals)
-        return long_enough and has_signals
+        signal_count = sum(1 for s in complex_signals if s in user_input.lower())
+        # Chinese text carries ~3x info per char; 30 Chinese chars ≈ 80 English chars
+        long_enough = len(user_input) > 30
+        return long_enough and signal_count >= 2
 
     # ── Shared Internals ──────────────────────────────────────
 
