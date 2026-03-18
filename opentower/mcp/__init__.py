@@ -1,9 +1,10 @@
 """MCP package — Model Context Protocol dual-mode support.
 
-Client: Connect to external MCP servers, auto-discover their tools as Skills.
-Server: Expose OpenTower's Skills as an MCP-compatible endpoint.
+Client: Connect to external MCP servers, discover tools/resources/prompts.
+Server: Expose OpenTower's Skills as an MCP endpoint (stdio + HTTP/SSE).
 """
 
-from .client import MCPClient
+from .client import MCPClient, MCPServerInfo
+from .server import MCPServer
 
-__all__ = ["MCPClient"]
+__all__ = ["MCPClient", "MCPServer", "MCPServerInfo"]

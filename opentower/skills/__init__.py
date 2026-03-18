@@ -54,15 +54,29 @@ class SkillRegistry:
 
     def load_from_config(self, skill_configs: list[SkillConfig]) -> None:
         """Auto-discover and load skills from config entries."""
+        self._mcp_configs: list[SkillConfig] = []
         for sc in skill_configs:
             if sc.type == "python":
                 self._load_python_skill(sc)
             elif sc.type == "cli":
                 logger.info("CLI skill '%s' — will call subprocess directly", sc.name)
             elif sc.type == "mcp":
-                logger.info("MCP skill '%s' — bridge not yet implemented", sc.name)
+                self._mcp_configs.append(sc)
+                logger.info("MCP skill '%s' — queued for async initialization", sc.name)
             else:
                 logger.warning("Unknown skill type: %s", sc.type)
+
+    @property
+    def mcp_server_configs(self) -> list[dict]:
+        """Get MCP server configs for MCPClient initialization."""
+        configs = []
+        for sc in getattr(self, "_mcp_configs", []):
+            configs.append({
+                "name": sc.name,
+                "command": getattr(sc, "command", ""),
+                "env": getattr(sc, "env", {}),
+            })
+        return configs
 
     def _load_python_skill(self, sc: SkillConfig) -> None:
         """Import a Python module and register its @skill-decorated functions."""

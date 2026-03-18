@@ -87,11 +87,12 @@ channels:
     # port: 9000
 
 # ── MCP Server ─────────────────────────────────────────────────
-# Expose OpenTower's skills to other agents via MCP protocol
-# mcp_server:
-#   enabled: false
-#   transport: stdio  # or http
-#   port: 3100
+# Expose OpenTower as a protocol node — other agents call our Skills via MCP
+mcp_server:
+  enabled: false
+  transport: stdio       # stdio (Claude Desktop, Cursor) | http (web agents)
+  port: 3100             # HTTP/SSE port (when transport: http)
+  expose_skills: []      # empty = expose ALL skills | list specific ones
 
 # ── Heartbeat & Scheduler ─────────────────────────────────────
 heartbeat:

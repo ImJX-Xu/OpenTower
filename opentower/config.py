@@ -82,6 +82,14 @@ class ScheduleConfig(BaseModel):
     action: str
 
 
+class MCPServerConfig(BaseModel):
+    """Config for exposing OpenTower as an MCP server."""
+    enabled: bool = False
+    transport: str = "stdio"  # stdio | http
+    port: int = 3100
+    expose_skills: list[str] = Field(default_factory=list)  # empty = expose all
+
+
 class Config(BaseModel):
     """Root configuration for the Agent OS."""
     agent: AgentConfig = Field(default_factory=AgentConfig)
@@ -89,6 +97,7 @@ class Config(BaseModel):
     channels: list[ChannelConfig] = Field(default_factory=list)
     heartbeat: HeartbeatConfig = Field(default_factory=HeartbeatConfig)
     schedules: list[ScheduleConfig] = Field(default_factory=list)
+    mcp_server: MCPServerConfig = Field(default_factory=MCPServerConfig)
 
     @property
     def enabled_skills(self) -> list[SkillConfig]:
