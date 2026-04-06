@@ -1,12 +1,14 @@
 import { Suspense, useEffect } from 'react'
 import { Canvas } from '@react-three/fiber'
 import { useElevator } from './hooks/useElevator'
+import { useBackgroundMusic } from './hooks/useBackgroundMusic'
 import Scene from './components/Scene'
 import HUD from './components/ui/HUD'
 import { buildingName, buildingSubtitle } from './utils/floorConfig'
 
 export default function App() {
     const elevator = useElevator()
+    useBackgroundMusic('/The_Last_Relay_Click.opus')
 
     useEffect(() => {
         document.title = `${buildingName} — ${buildingSubtitle}`
