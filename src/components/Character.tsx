@@ -1,7 +1,8 @@
 'use client'
 
-import { useRef, useMemo, memo } from 'react'
+import { useRef, useMemo, memo, useState } from 'react'
 import { useFrame } from '@react-three/fiber'
+import { Html } from '@react-three/drei'
 import * as THREE from 'three'
 
 interface CharacterProps {
@@ -9,6 +10,7 @@ interface CharacterProps {
     pose: 'typing' | 'standing' | 'phone' | 'sitting' | 'leaning'
     seed: number
     floorActive: boolean
+    onRemove?: () => void
 }
 
 // Seeded random
@@ -27,6 +29,9 @@ const hairGeo = new THREE.SphereGeometry(0.09, 6, 4, 0, Math.PI * 2, 0, Math.PI 
 const armGeo = new THREE.BoxGeometry(0.08, 0.25, 0.08)
 const handGeo = new THREE.SphereGeometry(0.035, 4, 4)
 const legGeo = new THREE.BoxGeometry(0.1, 0.34, 0.1)
+// Invisible hitbox covering the full character body for hover detection
+const hitboxGeo = new THREE.BoxGeometry(1.2, 2.0, 0.8)
+const hitboxMat = new THREE.MeshBasicMaterial({ visible: false })
 
 const hairMat = new THREE.MeshStandardMaterial({ color: '#1a1a1a', roughness: 0.9 })
 const pantsMat = new THREE.MeshStandardMaterial({ color: '#1a1a2a', roughness: 0.8 })
@@ -38,12 +43,17 @@ const SHIRT_COLORS = ['#1a3a5c', '#3c1a5c', '#5c1a2a', '#1a5c3a', '#4a4a5c']
  * Character — Low-poly humanoid figure.
  * Memo'd with shared geometries for performance.
  * Throttled animation (~15fps).
+ * Shows a "Go Home" button on hover.
  */
-const Character = memo(function Character({ position, seed, floorActive }: CharacterProps) {
+const Character = memo(function Character({ position, seed, floorActive, onRemove }: CharacterProps) {
+    const groupRef = useRef<THREE.Group>(null)
     const headRef = useRef<THREE.Group>(null)
     const leftArmRef = useRef<THREE.Group>(null)
     const rightArmRef = useRef<THREE.Group>(null)
     const frameCountRef = useRef(0)
+    const [hovered, setHovered] = useState(false)
+    const [removing, setRemoving] = useState(false)
+    const removeProgressRef = useRef(0)
 
     const data = useMemo(() => {
         const rand = seededRandom(seed)
@@ -64,6 +74,20 @@ const Character = memo(function Character({ position, seed, floorActive }: Chara
     // Throttled animation (~15fps instead of 60fps)
     useFrame(({ clock }) => {
         if (!floorActive) return
+
+        // Removal animation: shrink + float up
+        if (removing && groupRef.current) {
+            removeProgressRef.current += 0.03
+            const p = removeProgressRef.current
+            const scale = Math.max(0, 1 - p)
+            groupRef.current.scale.set(scale, scale, scale)
+            groupRef.current.position.y = position[1] + p * 2
+
+            if (p >= 1 && onRemove) {
+                onRemove()
+            }
+            return
+        }
 
         frameCountRef.current++
         if (frameCountRef.current % 4 !== 0) return // Skip 3 of every 4 frames
@@ -92,8 +116,36 @@ const Character = memo(function Character({ position, seed, floorActive }: Chara
         }
     })
 
+    const handleGoHome = (e: React.MouseEvent) => {
+        e.stopPropagation()
+        setRemoving(true)
+        setHovered(false)
+    }
+
     return (
-        <group position={position}>
+        <group
+            ref={groupRef}
+            position={position}
+        >
+            {/* Invisible hitbox for hover detection — covers body + button zone */}
+            <mesh
+                position={[0, 0.75, 0.1]}
+                geometry={hitboxGeo}
+                material={hitboxMat}
+                onPointerEnter={(e) => {
+                    e.stopPropagation()
+                    if (!removing) {
+                        setHovered(true)
+                        document.body.style.cursor = 'pointer'
+                    }
+                }}
+                onPointerLeave={(e) => {
+                    e.stopPropagation()
+                    setHovered(false)
+                    document.body.style.cursor = 'auto'
+                }}
+            />
+
             {/* Torso */}
             <mesh position={[0, 0.72, 0]} geometry={torsoGeo} material={data.shirtMat} />
 
@@ -118,6 +170,25 @@ const Character = memo(function Character({ position, seed, floorActive }: Chara
             {/* Legs */}
             <mesh position={[-0.08, 0.28, 0.05]} geometry={legGeo} material={pantsMat} />
             <mesh position={[0.08, 0.28, 0.05]} geometry={legGeo} material={pantsMat} />
+
+            {/* Go Home floating button */}
+            {hovered && !removing && (
+                <Html
+                    position={[0, 1.1, 0.3]}
+                    center
+                    distanceFactor={8}
+                    zIndexRange={[100, 0]}
+                    style={{ pointerEvents: 'auto' }}
+                >
+                    <button
+                        className="go-home-btn"
+                        onClick={handleGoHome}
+                        onPointerDown={(e) => e.stopPropagation()}
+                    >
+                        🏠 Go Home
+                    </button>
+                </Html>
+            )}
         </group>
     )
 })

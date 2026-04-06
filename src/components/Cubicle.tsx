@@ -4,6 +4,7 @@ import { useMemo, useRef } from 'react'
 import { useFrame } from '@react-three/fiber'
 import * as THREE from 'three'
 import Character from './Character'
+import { useRemovedCharacters } from '../hooks/useRemovedCharacters'
 
 interface CubicleProps {
     position: [number, number, number]
@@ -29,6 +30,7 @@ export default function Cubicle({ position, col, row, floorIndex, floorActive }:
     const scanLineRef = useRef(0)
     const seed = floorIndex * 1000 + row * 100 + col
     const rng = useMemo(() => seededRandom(seed), [seed])
+    const { isRemoved, remove } = useRemovedCharacters()
 
     const monitorColor = useMemo(() => MONITOR_COLORS[Math.floor(rng() * MONITOR_COLORS.length)], [rng])
     const isOverloaded = useMemo(() => rng() < 0.1, [rng])  // 10% overloaded
@@ -121,13 +123,14 @@ export default function Cubicle({ position, col, row, floorIndex, floorActive }:
                 <meshStandardMaterial color="#0e0e14" metalness={0.7} />
             </mesh>
 
-            {/* Neural node — only in front row for performance */}
-            {row === 2 && (
+            {/* Neural node — only in front row for performance, skip if removed */}
+            {row === 2 && !isRemoved(seed) && (
                 <Character
                     position={[0, 0, 0.25]}
                     pose="typing"
                     seed={seed}
                     floorActive={floorActive}
+                    onRemove={() => remove(seed)}
                 />
             )}
         </group>
