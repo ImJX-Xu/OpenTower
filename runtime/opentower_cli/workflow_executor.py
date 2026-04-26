@@ -16,6 +16,7 @@ from .feedback_agent import (
 )
 from .intent_parser import parse_objective
 from .linux_executor import execute_commands
+from .operation_catalog import parser_kind_for_operation
 from .ops_types import AgentTurn, CommandPlan, Intent, PlannedCommand
 from .runtime_layout import RuntimeLayout, repo_runtime_layout
 from .security_agent import assess_intent
@@ -353,17 +354,12 @@ def execute_workflow(
     )
 
 
-def _plan_for_confirmation(operation: str, workflow_id: str) -> CommandPlan:
-    parser_kind = "user-management"
-    if operation == "chmod_recursive":
-        parser_kind = "chmod"
-    elif operation == "delete_path":
-        parser_kind = "destructive-path"
+def _plan_for_confirmation(operation: str, workflow_id: str, *, parser_kind: str | None = None) -> CommandPlan:
     return CommandPlan(
         workflow_id=workflow_id,
         operation=operation,
         summary="Confirmation execution",
-        parser_kind=parser_kind,
+        parser_kind=parser_kind or parser_kind_for_operation(operation, workflow_id, default="user-management"),
     )
 
 
@@ -416,18 +412,16 @@ def resolve_confirmation(
 
     commands = [PlannedCommand(**command) for command in record.commands]
     results = execute_commands(commands)
-    plan = _plan_for_confirmation(record.operation, record.workflow_id)
-    intent = Intent(
-        workflow_id=record.workflow_id,
-        operation=record.operation,
-        objective=record.objective,
-        entities={},
-        confidence=1.0,
-        rationale="Confirmed execution path.",
+    plan = _plan_for_confirmation(
+        record.operation,
+        record.workflow_id,
+        parser_kind=str(record.plan_parser_kind or "").strip() or None,
     )
+    intent = record.to_intent()
+    assessment = record.to_assessment()
     final_output = format_execution_response(
         intent=intent,
-        assessment=type("Assessment", (), {"risk_level": record.risk_level})(),
+        assessment=assessment,
         plan=plan,
         results=results,
     )

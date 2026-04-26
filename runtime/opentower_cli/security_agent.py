@@ -5,6 +5,7 @@ from .ops_types import Intent, SecurityAssessment
 
 CRITICAL_PATHS = ("/", "/etc", "/boot", "/sys", "/proc", "/bin", "/sbin", "/usr", "/lib", "/lib64")
 PROTECTED_USERS = {"root"}
+PRIVILEGED_GROUPS = {"sudo", "docker", "adm", "wheel", "root", "lxd", "libvirt"}
 
 
 def _path_is_critical(path: str) -> bool:
@@ -18,6 +19,40 @@ def _path_is_critical(path: str) -> bool:
 
 
 def assess_intent(intent: Intent) -> SecurityAssessment:
+    if intent.operation == "create_user":
+        username = str(intent.entities.get("username", "")).strip() or "<unknown>"
+        return SecurityAssessment(
+            decision="confirm",
+            risk_level="high",
+            reason=f"Creating user '{username}' changes local account state and should be confirmed explicitly.",
+            impacts=[
+                "A new login identity may gain filesystem and process ownership on this machine.",
+                "Automation or services may start relying on the new account immediately.",
+            ],
+            requires_reason=True,
+        )
+
+    if intent.operation == "add_user_to_group":
+        username = str(intent.entities.get("username", "")).strip() or "<unknown>"
+        group = str(intent.entities.get("group", "")).strip() or "<unknown>"
+        privileged = group.lower() in PRIVILEGED_GROUPS
+        impacts = [
+            f"User '{username}' will inherit permissions associated with group '{group}'.",
+            "The permission change may take effect for future sessions without further review.",
+        ]
+        if privileged:
+            impacts.append(f"Group '{group}' is treated as privileged and may grant elevated host access.")
+        return SecurityAssessment(
+            decision="confirm",
+            risk_level="high",
+            reason=(
+                f"Adding user '{username}' to group '{group}' changes effective host permissions"
+                + (" and may grant elevated access." if privileged else ".")
+            ),
+            impacts=impacts,
+            requires_reason=True,
+        )
+
     if intent.operation == "delete_path":
         target_path = str(intent.entities.get("path", "")).strip() or "/"
         if _path_is_critical(target_path):

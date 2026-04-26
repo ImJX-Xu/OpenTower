@@ -8,15 +8,13 @@ from typing import Any
 
 from .anthropic_client import AnthropicMessagesClient
 from .auth_config import AuthProfile, load_auth_profile
+from .operation_catalog import FALLBACK_RESEARCH, render_supported_operation_rows, supported_operations_by_source
 from .ollama_client import OllamaMessagesClient
 from .openai_compatible_client import OpenAICompatibleMessagesClient
 from .ops_types import Intent, IntentResolution
 
 
-FALLBACK_OPERATIONS: dict[str, set[str]] = {
-    "process-port-inspection": {"service_status", "top_cpu", "top_memory", "load_average", "uptime_summary"},
-    "file-search": {"tail_log", "recent_error_scan"},
-}
+FALLBACK_OPERATIONS: dict[str, set[str]] = supported_operations_by_source(FALLBACK_RESEARCH)
 SERVICE_LOG_PATHS = {
     "nginx": "/var/log/nginx/error.log",
     "auth": "/var/log/auth.log",
@@ -112,6 +110,7 @@ class FallbackResearchAgent:
 
 
 def _fallback_system_prompt() -> str:
+    supported = render_supported_operation_rows(FALLBACK_RESEARCH)
     return "\n".join(
         [
             "You are the OpenTower Linux Ops fallback research agent.",
@@ -121,8 +120,7 @@ def _fallback_system_prompt() -> str:
             "Never emit shell commands.",
             "Never propose restart, stop, start, install, delete, chmod, package management, deployment, firewall, or user mutation operations.",
             "Allowed operations:",
-            "- process-port-inspection: service_status(service), top_cpu(), top_memory(), load_average(), uptime_summary()",
-            "- file-search: tail_log(path,line_count optional,service optional), recent_error_scan(path,limit optional,service optional)",
+            *[f"- {row}" for row in supported],
             "Canonical mappings:",
             "- show cpu usage => process-port-inspection / top_cpu",
             "- show load average => process-port-inspection / load_average",

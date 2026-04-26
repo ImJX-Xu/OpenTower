@@ -72,6 +72,10 @@ def format_confirmation_response(
             uid = candidate.get("uid", "-")
             home = candidate.get("home", "-")
             lines.append(f"- {username} (UID: {uid}, HOME: {home})")
+    preview_lines = preview.get("lines", [])
+    if isinstance(preview_lines, list) and preview_lines:
+        lines.append("执行前检查结果:")
+        lines.extend(f"- {line}" for line in preview_lines[:10])
     if assessment.impacts:
         lines.append("潜在影响:")
         lines.extend(f"- {impact}" for impact in assessment.impacts)
@@ -83,6 +87,7 @@ def format_confirmation_response(
 
 
 def format_unsupported_response(*, objective: str, reason: str) -> str:
+    suggestions = _rewrite_suggestions(objective)
     lines = [
         "Request is outside the current implemented Linux ops scope. No commands were executed.",
         f"objective: {objective}",
@@ -94,7 +99,47 @@ def format_unsupported_response(*, objective: str, reason: str) -> str:
         "- user management with safety checks",
         "suggestion: rewrite the request as a concrete disk, file, process, port, service-status, or user-management task.",
     ]
+    if suggestions:
+        lines.append("try_instead:")
+        lines.extend(f"- {suggestion}" for suggestion in suggestions)
     return "\n".join(lines)
+
+
+def _rewrite_suggestions(objective: str) -> list[str]:
+    text = str(objective or "").strip()
+    lowered = text.lower()
+
+    def _service_name() -> str:
+        for candidate in ("nginx", "sshd", "redis", "mysql", "postgres", "postgresql", "docker", "haproxy"):
+            if candidate in lowered:
+                return candidate
+        return "nginx"
+
+    suggestions: list[str] = []
+    if any(token in lowered for token in ("restart", "start", "stop", "service", "daemon")):
+        service = _service_name()
+        suggestions.append(f"check {service} service status")
+    if any(token in lowered for token in ("cpu", "slow", "load", "latency", "performance")):
+        suggestions.extend(["show cpu usage", "show load average"])
+    if any(token in lowered for token in ("log", "journal", "error")):
+        service = _service_name()
+        suggestions.append(f"tail the latest {service} error log" if service != "sshd" else "tail the latest syslog log")
+    if any(token in lowered for token in ("disk", "filesystem", "storage", "partition")) or any(token in text for token in ("磁盘", "存储", "分区", "文件系统")):
+        suggestions.append("查看磁盘使用情况")
+    if any(token in lowered for token in ("user", "account", "group")) or any(token in text for token in ("用户", "账号", "组")):
+        suggestions.extend(["查看所有用户", "inspect user dev01"])
+    if any(token in lowered for token in ("config", "file", "directory", "search", "find")) or any(token in text for token in ("配置", "文件", "目录", "查找", "搜索")):
+        suggestions.append("找到所有 nginx 配置文件")
+
+    ordered: list[str] = []
+    seen: set[str] = set()
+    for suggestion in suggestions:
+        clean = suggestion.strip()
+        if not clean or clean in seen:
+            continue
+        seen.add(clean)
+        ordered.append(clean)
+    return ordered[:3]
 
 
 def _format_disk_summary(results: list[CommandExecution], warning_threshold: int) -> str:

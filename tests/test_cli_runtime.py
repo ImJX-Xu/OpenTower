@@ -5,6 +5,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from opentower_cli import cli as cli_mod
+from opentower_cli.confirmation_store import load_confirmation
 from opentower_cli.config_loader import load_system_config, load_workflows_catalog, validate_repository_integrity
 from opentower_cli.engine import dispatch
 from opentower_cli.ops_types import CommandExecution, Intent, IntentResolution
@@ -153,6 +154,89 @@ def test_execute_workflow_creates_confirmation_for_high_risk_request(tmp_path) -
     assert result.status == "pending_confirmation"
     assert result.confirmation_id is not None
     assert layout.confirmation_file(result.confirmation_id).exists()
+
+
+def test_confirmation_record_preserves_intent_entities_for_confirmed_execution(monkeypatch, tmp_path) -> None:
+    root = repo_root()
+    system = load_system_config(root)
+    workflows = load_workflows_catalog(root)
+    layout = repo_runtime_layout(tmp_path)
+    layout.ensure_dirs()
+    _seed_run_log(layout, "run-confirm-user", "create user smokeuser")
+
+    def fake_execute_commands(commands, *args, **kwargs):
+        names = [command.name for command in commands]
+        if names == ["inspect-user-before-create"]:
+            return [
+                CommandExecution(
+                    name="inspect-user-before-create",
+                    command="id smokeuser",
+                    description="Check whether the requested user already exists.",
+                    stdout="",
+                    stderr="",
+                    returncode=1,
+                    duration_seconds=0.1,
+                    allow_failure=True,
+                )
+            ]
+        return [
+            CommandExecution(
+                name="create-user",
+                command="useradd -m -s /bin/bash -- smokeuser",
+                description="Create the requested user.",
+                stdout="",
+                stderr="",
+                returncode=0,
+                duration_seconds=0.1,
+            ),
+            CommandExecution(
+                name="inspect-user-id",
+                command="id smokeuser",
+                description="Inspect the created user identity.",
+                stdout="uid=1001(smokeuser) gid=1001(smokeuser) groups=1001(smokeuser)",
+                stderr="",
+                returncode=0,
+                duration_seconds=0.1,
+            ),
+            CommandExecution(
+                name="inspect-user-groups",
+                command="groups smokeuser",
+                description="Inspect the created user group membership.",
+                stdout="smokeuser : smokeuser",
+                stderr="",
+                returncode=0,
+                duration_seconds=0.1,
+            ),
+        ]
+
+    monkeypatch.setattr("opentower_cli.workflow_executor.execute_commands", fake_execute_commands)
+
+    result = execute_workflow(
+        repo_root=tmp_path,
+        system_cfg=system,
+        workflow_cfg=next(row for row in workflows["workflows"] if row["id"] == "user-management"),
+        objective="create user smokeuser",
+        run_id="run-confirm-user",
+        runtime_layout=layout,
+    )
+
+    assert result.status == "pending_confirmation"
+    assert result.confirmation_id is not None
+
+    record = load_confirmation(layout, result.confirmation_id)
+    assert record.intent_entities == {"username": "smokeuser", "group": None}
+    assert record.plan_parser_kind == "user-management"
+
+    confirmation = resolve_confirmation(
+        repo_root=tmp_path,
+        confirmation_id=result.confirmation_id,
+        answer="yes",
+        reason="provision smoke user",
+        runtime_layout=layout,
+    )
+
+    assert confirmation.status == "executed"
+    assert "smokeuser" in confirmation.final_output
 
 
 def test_resolve_confirmation_can_reject_request(tmp_path) -> None:
