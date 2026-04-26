@@ -2,7 +2,7 @@
 
 OpenTower Linux Ops is a CLI-first Linux operations assistant. It accepts natural-language requests, routes them into a fixed multi-stage workflow, applies safety checks before execution, and returns structured, human-readable results.
 
-This repository is intentionally narrow. It does not try to become a general shell agent. It focuses on a small, audited set of Linux inspection and user-management tasks, model-assisted recovery for in-scope paraphrases, and explicit rejection for unsupported or unsafe requests.
+This repository keeps the runtime surface intentionally narrow and audited. It focuses on a small set of Linux inspection and user-management tasks, model-assisted recovery for in-scope paraphrases, and structured handling for requests that fall outside the shipped workflow set or cross safety boundaries.
 
 ## What It Does
 
@@ -40,18 +40,16 @@ The fixed agent chain is:
 - `command-planner`
 - `result-analyst`
 
-## What It Does Not Do
+## Current Scope
 
-OpenTower does not expose arbitrary shell generation.
+OpenTower keeps the runtime surface intentionally narrow and explicit.
 
-Unsupported categories include:
+Today it focuses on:
 
-- service restart, stop, start, reload, install, upgrade, deployment, and reboot
-- firewall and package-management changes
-- model-invented workflows outside the shipped catalog
-- write-capable fallback behavior
-
-Requests outside the current scope return structured rejection instead of a raw parser error.
+- Linux inspection and troubleshooting requests that map onto the shipped workflow catalog
+- confirmation-gated user and permission operations
+- structured routing, safety checks, command planning, and readable result summaries
+- structured handling when a request does not map onto the current workflow set
 
 ## Routing Model
 
@@ -181,12 +179,6 @@ Confirmation-gated requests:
 python -m opentower_cli "create user dev01"
 python -m opentower_cli "add user dev01 to docker group"
 python -m opentower_cli "chmod 777 /tmp/demo"
-```
-
-Explicitly unsupported:
-
-```bash
-python -m opentower_cli "restart nginx service"
 ```
 
 ## Evaluation and Verification

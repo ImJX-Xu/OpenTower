@@ -2,7 +2,7 @@
 
 OpenTower Linux Ops 是一个面向 Linux 运维场景的 CLI-first 自然语言助手。它接收自然语言请求，把请求路由到固定工作流，在执行前完成安全判断，并返回结构化、可读的结果。
 
-这个仓库刻意保持收敛。它不是一个“任意生成 shell”的通用代理，而是一套围绕少量已审计 Linux 运维操作构建的系统：支持固定范围的检查类任务和用户管理任务，对范围内但表达方式不同的请求做模型辅助归一化，对越界或高风险请求做明确拒绝。
+这个仓库刻意保持收敛，运行面保持在可审计、可验证的范围内。它围绕少量已审计的 Linux 运维操作构建：支持固定范围的检查类任务和用户管理任务，对范围内但表达方式不同的请求做模型辅助归一化，并对超出当前工作流集合或触发安全边界的请求返回结构化处理结果。
 
 ## 当前能做什么
 
@@ -40,18 +40,16 @@ OpenTower Linux Ops 是一个面向 Linux 运维场景的 CLI-first 自然语言
 - `command-planner`
 - `result-analyst`
 
-## 当前明确不做什么
+## 当前范围
 
-OpenTower 不提供任意 shell 自由生成。
+OpenTower 当前保持一个明确、可控的运行范围。
 
-当前明确不支持：
+目前重点覆盖：
 
-- 服务重启、停止、启动、重载、安装、升级、部署、重启机器
-- 防火墙和包管理修改
-- 超出当前 catalog 的模型自发扩展能力
-- 任何可写的 fallback 行为
-
-超出范围的请求会返回结构化拒绝结果，而不是直接抛出原始解析错误。
+- 能映射到已内置 workflow catalog 的 Linux 检查与排障请求
+- 需要显式确认的用户与权限类操作
+- 结构化路由、安全判断、命令规划和可读结果摘要
+- 对未命中当前工作流集合的请求返回结构化处理结果
 
 ## 路由模型
 
@@ -181,12 +179,6 @@ python -m opentower_cli "tail the latest syslog log"
 python -m opentower_cli "create user dev01"
 python -m opentower_cli "add user dev01 to docker group"
 python -m opentower_cli "chmod 777 /tmp/demo"
-```
-
-明确不支持的请求：
-
-```bash
-python -m opentower_cli "restart nginx service"
 ```
 
 ## 评测与验证
