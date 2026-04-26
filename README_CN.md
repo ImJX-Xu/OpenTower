@@ -67,17 +67,19 @@ python -m opentower_cli /auth
 - `user-management`
   - `list_users`
   - `inspect_user`
-  - `create_user`
-  - `add_user_to_group`
+  - `create_user`（确认后执行）
+  - `add_user_to_group`（确认后执行）
   - `delete_user`
   - `batch_delete_users`
 
 ## 安全策略
 
 - 高风险写操作要么直接阻断，要么进入二次确认。
+- 用户创建与组成员变更也进入确认流，不再直接落盘执行。
 - fallback research 只允许低风险只读动作，不负责写操作兜底。
 - `restart nginx service`、`install nginx`、`reboot the machine`、防火墙/包管理/部署类请求仍然不在当前范围内。
 - 类似“看日志”这类请求不再误路由到权限修改或删除操作。
+- operation 元数据与 confirmation replay 现在共享统一 catalog 和持久化上下文，降低了 normalizer、fallback 与确认执行之间的能力漂移。
 
 ## Provider 配置
 
@@ -106,6 +108,9 @@ Copy-Item auth.example.json auth.json
 ```bash
 python -m opentower_cli auth
 python -m opentower_cli provider-status
+python scripts/run_nl_eval.py --fixture-profile core
+python scripts/run_nl_eval.py --fixture-profile model --with-model --limit 20
+python scripts/run_wsl_smoke.py
 ```
 
 说明：
@@ -141,18 +146,18 @@ python -m opentower_cli dispatch --objective "restart nginx service" --execute
 
 针对 `2026-04-26` 快照，当前已验证：
 
-- `python -m pytest -q` -> `81 passed`
-- `python scripts/run_nl_eval.py` -> `509/509 passed`
-- WSL 只读 smoke 已验证：
-  - `show cpu usage`
-  - `show load average`
-  - `tail the latest syslog log`
-  - `check sshd service status`
-  - 安全拒绝：`restart nginx service`
+- `python -m pytest -q` -> `95 passed`
+- `python scripts/run_nl_eval.py --fixture-profile extended` -> `2009/2009 passed`
+- `python scripts/run_nl_eval.py --fixture-profile core` -> `416/416 passed`
+- `python scripts/run_nl_eval.py --fixture-profile model` -> `228/228 passed`
+- `python scripts/run_nl_eval.py --fixture-profile model --with-model --limit 20` -> `20/20 passed`
+- `python scripts/run_wsl_smoke.py` -> `10/10 passed`
+- 基于一轮已完成的 `543` 条 WSL 真实执行结果裁出的整数版 `500` 条报告 -> `499/500 passed`
 
 ## 提交说明
 
 - 提交代码时保留 `auth.example.json`，不要提交 `auth.json`。
 - `production/` 下的运行日志、转录、确认记录默认都按本地产物处理。
+- 自然语言评测语料现在分为 `extended / core / model` 三层 fixture；扩充这份语料本身可以直接作为 PR 提交，而新的运行时能力仍应通过 parser、normalizer 或 fallback agent 的受审代码变更进入主线。
 - 英文说明见 [README.md](README.md)。
 - 评委说明文档见 [比赛版设计说明文档.md](比赛版设计说明文档.md)。

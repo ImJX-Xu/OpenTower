@@ -322,6 +322,29 @@ def plan_commands(intent: Intent, assessment: SecurityAssessment) -> CommandPlan
                 operation=intent.operation,
                 summary="Create the requested user and inspect the result.",
                 parser_kind="user-management",
+                preview_parser_kind="text-preview",
+                preview_commands=[
+                    PlannedCommand(
+                        name="inspect-user-before-create",
+                        description="Check whether the requested user already exists.",
+                        command=f"id {_q(username)}",
+                        allowed_returncodes=(0, 1),
+                        allow_failure=True,
+                    ),
+                    *(
+                        [
+                            PlannedCommand(
+                                name="inspect-target-group-before-create",
+                                description="Check whether the requested group exists.",
+                                command=f"getent group {_q(group)}",
+                                allowed_returncodes=(0, 1),
+                                allow_failure=True,
+                            )
+                        ]
+                        if group
+                        else []
+                    ),
+                ],
                 execution_commands=commands,
             )
 
@@ -331,6 +354,23 @@ def plan_commands(intent: Intent, assessment: SecurityAssessment) -> CommandPlan
                 operation=intent.operation,
                 summary="Add the requested user to the requested group.",
                 parser_kind="user-management",
+                preview_parser_kind="text-preview",
+                preview_commands=[
+                    PlannedCommand(
+                        name="inspect-user-before-group-update",
+                        description="Inspect the target user before updating group membership.",
+                        command=f"id {_q(username)}",
+                        allowed_returncodes=(0, 1),
+                        allow_failure=True,
+                    ),
+                    PlannedCommand(
+                        name="inspect-target-group-before-update",
+                        description="Inspect the target group before updating membership.",
+                        command=f"getent group {_q(group)}",
+                        allowed_returncodes=(0, 1),
+                        allow_failure=True,
+                    ),
+                ],
                 execution_commands=[
                     PlannedCommand(
                         name="add-user-to-group",

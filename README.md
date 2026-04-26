@@ -67,17 +67,19 @@ This keeps unsupported behavior explicit instead of failing with a raw parser er
 - `user-management`
   - `list_users`
   - `inspect_user`
-  - `create_user`
-  - `add_user_to_group`
+  - `create_user` (confirmation required)
+  - `add_user_to_group` (confirmation required)
   - `delete_user`
   - `batch_delete_users`
 
 ## Safety Policy
 
 - High-risk writes are blocked or forced through explicit confirmation.
+- User creation and group-membership changes now also route through confirmation instead of executing immediately.
 - The fallback research path is read-only by design.
 - Requests such as `restart nginx service`, `install nginx`, `reboot the machine`, and firewall/package-management actions remain unsupported.
 - Log-tail requests no longer misroute into destructive permission-changing operations.
+- Operation metadata and confirmation replay now share a centralized catalog and persisted execution context, which reduces drift across normalizer, fallback, and confirmation resolution.
 
 ## Provider Setup
 
@@ -106,6 +108,9 @@ Useful checks:
 ```bash
 python -m opentower_cli auth
 python -m opentower_cli provider-status
+python scripts/run_nl_eval.py --fixture-profile core
+python scripts/run_nl_eval.py --fixture-profile model --with-model --limit 20
+python scripts/run_wsl_smoke.py
 ```
 
 Notes:
@@ -141,18 +146,18 @@ The last example is expected to return `resolution_status: unsupported`.
 
 Current local verification for the `2026-04-26` snapshot:
 
-- `python -m pytest -q` -> `81 passed`
-- `python scripts/run_nl_eval.py` -> `509/509 passed`
-- Read-only WSL smoke validated:
-  - `show cpu usage`
-  - `show load average`
-  - `tail the latest syslog log`
-  - `check sshd service status`
-  - safe deny: `restart nginx service`
+- `python -m pytest -q` -> `95 passed`
+- `python scripts/run_nl_eval.py --fixture-profile extended` -> `2009/2009 passed`
+- `python scripts/run_nl_eval.py --fixture-profile core` -> `416/416 passed`
+- `python scripts/run_nl_eval.py --fixture-profile model` -> `228/228 passed`
+- `python scripts/run_nl_eval.py --fixture-profile model --with-model --limit 20` -> `20/20 passed`
+- `python scripts/run_wsl_smoke.py` -> `10/10 passed`
+- WSL real-execution rounded report derived from a completed 543-case run -> `499/500 passed`
 
 ## Repo Notes
 
 - Commit `auth.example.json`, not `auth.json`.
 - Runtime outputs under `production/` are local artifacts unless you intentionally want to version them.
+- The NL eval corpus now ships as layered `extended / core / model` JSONL fixtures; expanding them is PR-able as evaluation coverage, while new runtime support should still be promoted through reviewed changes in the parser, normalizer, or fallback agent.
 - Chinese project notes live in [README_CN.md](README_CN.md).
 - The judge-facing design overview lives in [比赛版设计说明文档.md](比赛版设计说明文档.md).

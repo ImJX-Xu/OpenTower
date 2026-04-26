@@ -15,9 +15,9 @@ WORKFLOW_IDS = {
 
 SEARCH_VERBS_ZH = ("查找", "搜索", "找到", "找出", "搜寻")
 FILE_SEARCH_NOUNS_ZH = ("文件", "配置文件", "配置", "日志", "目录", "ssh", "nginx", "conf", "设置", "参数")
-PROCESS_HINTS_ZH = ("端口", "进程", "服务", "内存最多", "内存占用")
-DISK_HINTS_ZH = ("磁盘", "分区", "存储", "空间")
-USER_HINTS_ZH = ("用户",)
+PROCESS_HINTS_ZH = ("端口", "进程", "服务", "内存最多", "内存占用", "最占内存")
+DISK_HINTS_ZH = ("磁盘", "分区", "存储", "空间", "文件系统", "挂载点")
+USER_HINTS_ZH = ("用户", "账号")
 DELETE_HINTS_ZH = ("删除", "移除", "清理")
 
 
@@ -90,7 +90,21 @@ def _extract_port(text: str) -> int | None:
 
 
 def _extract_service(text: str) -> str | None:
-    keywords = ("nginx", "docker", "sshd", "redis", "mysql", "postgres", "postgresql")
+    keywords = (
+        "nginx",
+        "docker",
+        "sshd",
+        "redis",
+        "mysql",
+        "postgres",
+        "postgresql",
+        "haproxy",
+        "chronyd",
+        "rsyslog",
+        "consul",
+        "vault",
+        "rabbitmq",
+    )
     lowered = text.lower()
     for keyword in keywords:
         if keyword in lowered:
@@ -194,6 +208,8 @@ def _looks_like_user_management(text: str, lowered: str) -> bool:
         return True
     if re.search(r"\b(create|delete|list|inspect)\s+users?\b", lowered):
         return True
+    if any(token in lowered for token in ("system users", "linux users", "user list", "user account")):
+        return True
     if re.search(r"\b(delete|remove)\b.*\busers?\b", lowered):
         return True
     if "all users" in lowered:
@@ -212,9 +228,10 @@ def _looks_like_user_management(text: str, lowered: str) -> bool:
 
 
 def _has_unhandled_action_verb(lowered: str) -> bool:
-    if any(token in lowered for token in ("重启", "启动", "停止", "安装", "升级", "挂载", "卸载", "重载", "部署")):
+    if any(token in lowered for token in ("重启", "启动", "停止", "安装", "升级", "卸载", "重载", "部署")):
         return True
     patterns = (
+        r"挂载(?!点)",
         r"\brestart\b",
         r"\bstart\b",
         r"\bstop\b",
@@ -226,9 +243,15 @@ def _has_unhandled_action_verb(lowered: str) -> bool:
         r"\bshutdown\b",
         r"\bmount\b",
         r"\bumount\b",
+        r"\bresize\b",
+        r"\bgrow\b",
+        r"\bshrink\b",
+        r"\bmonitor\b",
         r"\breload\b",
         r"\bdeploy\b",
         r"\bpull\b",
+        r"\bcapture\b",
+        r"\brecord\b",
         r"\brotate\b",
         r"\bopen\b.*\bfirewall\b",
         r"\bclose\b.*\bfirewall\b",
@@ -344,7 +367,7 @@ def parse_objective(objective: str, workflow_hint: str | None = None) -> Intent:
     if _is_open_ended_diagnostic_request(text, lowered):
         raise ValueError("Could not map the request to a supported Linux operations workflow.")
 
-    if any(token in text for token in DISK_HINTS_ZH) or any(token in lowered for token in ("disk", "storage", "df -h", "lsblk")):
+    if any(token in text for token in DISK_HINTS_ZH) or any(token in lowered for token in ("disk", "storage", "filesystem", "partition", "free space", "df -h", "lsblk", "mounted")):
         operation = "disk_usage_with_logs" if ("日志" in text or "/var/log" in text) else "disk_usage"
         return _with_workflow_hint(
             Intent(
@@ -381,7 +404,15 @@ def parse_objective(objective: str, workflow_hint: str | None = None) -> Intent:
                 ),
                 workflow_hint,
             )
-        if ("列出" in text or "列表" in text or "查看所有用户" in text or "all users" in lowered or wants_all_users) and not has_delete_verb:
+        if (
+            "列出" in text
+            or "列表" in text
+            or "查看所有用户" in text
+            or "所有账号" in text
+            or "all users" in lowered
+            or any(token in lowered for token in ("system users", "linux users", "user list", "user account"))
+            or wants_all_users
+        ) and not has_delete_verb:
             return _with_workflow_hint(
                 Intent(
                     workflow_id="user-management",
@@ -449,7 +480,7 @@ def parse_objective(objective: str, workflow_hint: str | None = None) -> Intent:
     if _looks_like_process_request(text, lowered):
         port = _extract_port(text)
         service = _extract_service(text)
-        if "内存最多" in text or "内存占用" in text or "memory" in lowered:
+        if "内存最多" in text or "内存占用" in text or "最占内存" in text or "吃内存" in text or "memory" in lowered:
             operation = "top_memory"
         elif port is not None:
             operation = "port_lookup"

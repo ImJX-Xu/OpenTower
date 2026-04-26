@@ -23,6 +23,8 @@ production/collaboration-kernel/
 production/incidents/
 production/memories/
 production/artifact-registry.json
+production/eval-reports/
+plans/
 AI_Hackathon_2026.pdf
 auth.json
 技术组移植任务说明.md

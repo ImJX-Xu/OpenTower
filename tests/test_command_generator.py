@@ -70,3 +70,39 @@ def test_plan_commands_service_status_avoids_matching_the_dispatch_command_itsel
     assert plan.parser_kind == "process"
     assert len(plan.execution_commands) == 1
     assert plan.execution_commands[0].command == "systemctl status sshd --no-pager 2>/dev/null || ps -C sshd -o pid=,comm=,args= 2>/dev/null"
+
+
+def test_plan_commands_create_user_includes_safe_preview_checks() -> None:
+    plan = plan_commands(
+        Intent(
+            workflow_id="user-management",
+            operation="create_user",
+            objective="create user dev01",
+            entities={"username": "dev01", "group": "docker"},
+        ),
+        SecurityAssessment(decision="confirm", risk_level="high", reason="confirm"),
+    )
+
+    assert plan.parser_kind == "user-management"
+    assert plan.preview_parser_kind == "text-preview"
+    assert len(plan.preview_commands) == 2
+    assert plan.preview_commands[0].command == "id dev01"
+    assert plan.preview_commands[1].command == "getent group docker"
+    assert plan.execution_commands[0].command == "useradd -m -s /bin/bash -- dev01"
+
+
+def test_plan_commands_add_user_to_group_includes_safe_preview_checks() -> None:
+    plan = plan_commands(
+        Intent(
+            workflow_id="user-management",
+            operation="add_user_to_group",
+            objective="将用户 dev01 加入 docker 组",
+            entities={"username": "dev01", "group": "docker"},
+        ),
+        SecurityAssessment(decision="confirm", risk_level="high", reason="confirm"),
+    )
+
+    assert plan.preview_parser_kind == "text-preview"
+    assert len(plan.preview_commands) == 2
+    assert plan.preview_commands[0].command == "id dev01"
+    assert plan.preview_commands[1].command == "getent group docker"

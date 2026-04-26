@@ -7,17 +7,13 @@ from typing import Any
 
 from .anthropic_client import AnthropicMessagesClient
 from .auth_config import AuthProfile, load_auth_profile
+from .operation_catalog import LLM_NORMALIZER, render_supported_operation_rows, supported_operations_by_source
 from .ollama_client import OllamaMessagesClient
 from .openai_compatible_client import OpenAICompatibleMessagesClient
 from .ops_types import Intent, IntentResolution
 
 
-SUPPORTED_OPERATIONS: dict[str, set[str]] = {
-    "disk-inspection": {"disk_usage", "disk_usage_with_logs"},
-    "file-search": {"filename_search", "content_search", "inspect_permissions", "delete_path", "chmod_recursive"},
-    "process-port-inspection": {"port_lookup", "top_memory", "service_status"},
-    "user-management": {"list_users", "create_user", "add_user_to_group", "delete_user", "batch_delete_users", "inspect_user"},
-}
+SUPPORTED_OPERATIONS: dict[str, set[str]] = supported_operations_by_source(LLM_NORMALIZER)
 
 
 @dataclass(frozen=True)
@@ -74,12 +70,7 @@ class StructuredIntentNormalizer:
 
 
 def _normalizer_system_prompt() -> str:
-    supported = [
-        "disk-inspection: disk_usage, disk_usage_with_logs",
-        "file-search: filename_search(path, pattern, search_kind=file|directory), content_search(path, pattern), inspect_permissions(path), delete_path(path), chmod_recursive(path, mode)",
-        "process-port-inspection: port_lookup(port), top_memory(), service_status(service)",
-        "user-management: list_users(), create_user(username, group optional), add_user_to_group(username, group), delete_user(username), batch_delete_users(user_filter), inspect_user(username)",
-    ]
+    supported = render_supported_operation_rows(LLM_NORMALIZER)
     return "\n".join(
         [
             "You are the OpenTower Linux Ops intent normalizer.",
