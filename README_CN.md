@@ -155,3 +155,4 @@ python -m opentower_cli dispatch --objective "restart nginx service" --execute
 - 提交代码时保留 `auth.example.json`，不要提交 `auth.json`。
 - `production/` 下的运行日志、转录、确认记录默认都按本地产物处理。
 - 英文说明见 [README.md](README.md)。
+- 评委说明文档见 [比赛版设计说明文档.md](比赛版设计说明文档.md)。

@@ -155,3 +155,4 @@ Current local verification for the `2026-04-26` snapshot:
 - Commit `auth.example.json`, not `auth.json`.
 - Runtime outputs under `production/` are local artifacts unless you intentionally want to version them.
 - Chinese project notes live in [README_CN.md](README_CN.md).
+- The judge-facing design overview lives in [比赛版设计说明文档.md](比赛版设计说明文档.md).
