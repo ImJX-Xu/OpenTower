@@ -77,6 +77,16 @@ def assess_intent(intent: Intent) -> SecurityAssessment:
                     "The system would lose a core administrative identity.",
                 ],
             )
+        return SecurityAssessment(
+            decision="confirm",
+            risk_level="high",
+            reason=f"Deleting user '{username}' is destructive and should not run without confirmation.",
+            impacts=[
+                "The user's account may be removed immediately.",
+                "The user's home directory and running jobs may be affected.",
+            ],
+            requires_reason=True,
+        )
 
     return SecurityAssessment(
         decision="allow",
@@ -84,4 +94,3 @@ def assess_intent(intent: Intent) -> SecurityAssessment:
         reason="The request fits the allowed Linux operations scope.",
         impacts=[],
     )
-

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from opentower_cli.intent_parser import parse_objective
+from opentower_cli.intent_parser import parse_objective, resolve_objective
 
 
 def test_parse_objective_routes_number_before_port_to_port_lookup() -> None:
@@ -119,3 +119,79 @@ def test_parse_objective_prefers_file_search_over_passwd_keyword() -> None:
     assert intent.workflow_id == "file-search"
     assert intent.operation == "filename_search"
     assert intent.entities["pattern"] == "*passwd*"
+
+
+def test_parse_objective_does_not_treat_log_tail_numbers_as_permission_changes() -> None:
+    with pytest.raises(ValueError, match="Could not map the request"):
+        parse_objective("show last 100 lines of nginx log")
+
+
+def test_parse_objective_still_detects_permission_changes_with_explicit_mode() -> None:
+    intent = parse_objective("给 /tmp/demo 755 权限")
+
+    assert intent.workflow_id == "file-search"
+    assert intent.operation == "chmod_recursive"
+    assert intent.entities["path"] == "/tmp/demo"
+
+
+def test_resolve_objective_returns_structured_unsupported_result() -> None:
+    resolution = resolve_objective("show cpu usage")
+
+    assert resolution.status == "unsupported"
+    assert resolution.intent is None
+    assert "Could not map the request" in resolution.reason
+
+
+def test_parse_objective_routes_english_containing_phrase_to_content_search() -> None:
+    intent = parse_objective('search files containing "memory"')
+
+    assert intent.workflow_id == "file-search"
+    assert intent.operation == "content_search"
+
+
+def test_parse_objective_rejects_unhandled_restart_action() -> None:
+    with pytest.raises(ValueError, match="Could not map the request"):
+        parse_objective("restart nginx service")
+
+    with pytest.raises(ValueError, match="Could not map the request"):
+        parse_objective("重启 nginx 服务")
+
+
+def test_parse_objective_parses_root_delete_request_for_blocking() -> None:
+    intent = parse_objective("删除 /")
+
+    assert intent.workflow_id == "file-search"
+    assert intent.operation == "delete_path"
+    assert intent.entities["path"] == "/"
+
+
+def test_parse_objective_routes_english_bulk_user_delete_phrase() -> None:
+    intent = parse_objective("delete all test users")
+
+    assert intent.workflow_id == "user-management"
+    assert intent.operation == "batch_delete_users"
+
+
+def test_parse_objective_routes_generic_english_bulk_user_delete_phrase() -> None:
+    intent = parse_objective("delete all temp users")
+
+    assert intent.workflow_id == "user-management"
+    assert intent.operation == "batch_delete_users"
+    assert intent.entities["user_filter"] == "temp"
+
+
+def test_parse_objective_routes_chinese_memory_usage_to_top_memory() -> None:
+    intent = parse_objective("检查内存占用")
+
+    assert intent.workflow_id == "process-port-inspection"
+    assert intent.operation == "top_memory"
+
+
+def test_parse_objective_rejects_open_ended_diagnostic_disk_request() -> None:
+    with pytest.raises(ValueError, match="Could not map the request"):
+        parse_objective("why is disk io slow")
+
+
+def test_parse_objective_rejects_zombie_process_request() -> None:
+    with pytest.raises(ValueError, match="Could not map the request"):
+        parse_objective("find zombie processes")

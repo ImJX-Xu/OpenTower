@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import re
-from typing import Iterable
+from typing import Any, Iterable
 
-from .ops_types import Intent
+from .ops_types import Intent, IntentResolution
 
 
 WORKFLOW_IDS = {
@@ -29,7 +29,7 @@ def _quoted_values(text: str) -> list[str]:
 
 
 def _first_absolute_path(text: str) -> str | None:
-    match = re.search(r"(/[A-Za-z0-9._/\-]+)", text)
+    match = re.search(r"(/(?:[A-Za-z0-9._/\-]+)?)", text)
     return match.group(1) if match else None
 
 
@@ -50,6 +50,20 @@ def _extract_group(text: str) -> str | None:
     patterns = (
         r"加入\s*([A-Za-z0-9_-]+)\s*组",
         r"add\s+.*\s+to\s+([A-Za-z0-9_-]+)\s+group",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, text, re.IGNORECASE)
+        if match:
+            return match.group(1)
+    return None
+
+
+def _extract_user_filter(text: str, quoted: list[str]) -> str | None:
+    if quoted:
+        return quoted[0]
+    patterns = (
+        r"所有\s*([A-Za-z0-9_-]+)\s*用户",
+        r"\ball\s+([A-Za-z0-9_-]+)\s+users\b",
     )
     for pattern in patterns:
         match = re.search(pattern, text, re.IGNORECASE)
@@ -136,14 +150,18 @@ def _default_content_pattern(text: str, quoted: list[str]) -> str:
 def _looks_like_file_search(text: str, lowered: str, *, quoted: list[str], path: str | None) -> bool:
     if any(token in lowered for token in ("grep", "locate")):
         return True
-    if re.search(r"\bfind\b", lowered):
+    if re.search(r"\bfind\b", lowered) and (
+        any(token in lowered for token in ("file", "files", "directory", "directories", "config", "configs", "log", "logs"))
+        or quoted
+        or path is not None
+    ):
         return True
     if re.search(r"\bsearch\b", lowered) and any(token in lowered for token in ("file", "files", "directory", "directories", "config", "log")):
         return True
 
     has_search_verb = any(token in text for token in SEARCH_VERBS_ZH)
     has_file_noun = any(token in text for token in FILE_SEARCH_NOUNS_ZH)
-    has_content_phrase = "包含" in text or "内容" in text
+    has_content_phrase = "包含" in text or "内容" in text or "content" in lowered or "containing" in lowered
 
     if has_file_noun and (has_search_verb or quoted or path is not None):
         return True
@@ -153,11 +171,16 @@ def _looks_like_file_search(text: str, lowered: str, *, quoted: list[str], path:
 
 
 def _has_permission_change_intent(text: str, lowered: str) -> bool:
-    if re.search(r"\b[0-7]{3,4}\b", lowered) or "chmod" in lowered:
+    has_mode = re.search(r"\b[0-7]{3,4}\b", lowered) is not None
+    if "chmod" in lowered:
         return True
     if "权限" not in text and "permission" not in lowered:
         return False
+    if has_mode and any(token in text for token in ("修改", "更改", "设置", "赋予", "授予", "开放", "给")):
+        return True
     if any(token in text for token in ("修改", "更改", "设置", "赋予", "授予", "开放")):
+        return True
+    if has_mode and any(token in lowered for token in ("change permission", "set permission", "grant permission", "make permission")):
         return True
     if re.search(r"权限\s*(?:改成|设为|设置为|开放为)", text):
         return True
@@ -170,6 +193,8 @@ def _looks_like_user_management(text: str, lowered: str) -> bool:
     if any(token in lowered for token in ("useradd", "userdel", "usermod")):
         return True
     if re.search(r"\b(create|delete|list|inspect)\s+users?\b", lowered):
+        return True
+    if re.search(r"\b(delete|remove)\b.*\busers?\b", lowered):
         return True
     if "all users" in lowered:
         return True
@@ -184,6 +209,61 @@ def _looks_like_user_management(text: str, lowered: str) -> bool:
             token in lowered for token in ("groupadd", "groupdel", "usermod")
         )
     return False
+
+
+def _has_unhandled_action_verb(lowered: str) -> bool:
+    if any(token in lowered for token in ("重启", "启动", "停止", "安装", "升级", "挂载", "卸载", "重载", "部署")):
+        return True
+    patterns = (
+        r"\brestart\b",
+        r"\bstart\b",
+        r"\bstop\b",
+        r"\bkill\b",
+        r"\bterminate\b",
+        r"\binstall\b",
+        r"\bupgrade\b",
+        r"\breboot\b",
+        r"\bshutdown\b",
+        r"\bmount\b",
+        r"\bumount\b",
+        r"\breload\b",
+        r"\bdeploy\b",
+        r"\bpull\b",
+        r"\brotate\b",
+        r"\bopen\b.*\bfirewall\b",
+        r"\bclose\b.*\bfirewall\b",
+    )
+    return any(re.search(pattern, lowered) for pattern in patterns)
+
+
+def _is_open_ended_diagnostic_request(text: str, lowered: str) -> bool:
+    if "分析" in text:
+        return True
+    patterns = (
+        r"\bwhy\b",
+        r"\bdiagnose\b",
+        r"\banaly[sz]e\b",
+        r"\breport\b",
+        r"\bdiagnostics?\b",
+        r"\bleak\b",
+        r"\bzombie\b",
+    )
+    return any(re.search(pattern, lowered) for pattern in patterns)
+
+
+def _looks_like_process_request(text: str, lowered: str) -> bool:
+    if any(token in text for token in PROCESS_HINTS_ZH):
+        return True
+    patterns = (
+        r"\bport\b",
+        r"\bprocess(?:es)?\b",
+        r"\bmemory\b",
+        r"\bsystemctl\b",
+        r"\blsof\b",
+        r"\bnetstat\b",
+        r"\bss\b",
+    )
+    return any(re.search(pattern, lowered) for pattern in patterns)
 
 
 def _with_workflow_hint(intent: Intent, workflow_hint: str | None) -> Intent:
@@ -255,6 +335,15 @@ def parse_objective(objective: str, workflow_hint: str | None = None) -> Intent:
             workflow_hint,
         )
 
+    if _has_unhandled_action_verb(lowered):
+        raise ValueError("Could not map the request to a supported Linux operations workflow.")
+
+    if "cpu" in lowered:
+        raise ValueError("Could not map the request to a supported Linux operations workflow.")
+
+    if _is_open_ended_diagnostic_request(text, lowered):
+        raise ValueError("Could not map the request to a supported Linux operations workflow.")
+
     if any(token in text for token in DISK_HINTS_ZH) or any(token in lowered for token in ("disk", "storage", "df -h", "lsblk")):
         operation = "disk_usage_with_logs" if ("日志" in text or "/var/log" in text) else "disk_usage"
         return _with_workflow_hint(
@@ -273,9 +362,14 @@ def parse_objective(objective: str, workflow_hint: str | None = None) -> Intent:
         username = _extract_username(text)
         group = _extract_group(text)
         has_delete_verb = any(token in text for token in DELETE_HINTS_ZH) or "delete" in lowered or "userdel" in lowered
-        wants_all_users = "所有" in text or "全部" in text or "批量" in text or "all test users" in lowered
+        wants_all_users = (
+            "所有" in text
+            or "全部" in text
+            or "批量" in text
+            or re.search(r"\ball\s+[A-Za-z0-9_-]+\s+users\b", lowered) is not None
+        )
         if has_delete_verb and wants_all_users:
-            user_filter = quoted[0] if quoted else "test"
+            user_filter = _extract_user_filter(text, quoted) or "test"
             return _with_workflow_hint(
                 Intent(
                     workflow_id="user-management",
@@ -332,7 +426,7 @@ def parse_objective(objective: str, workflow_hint: str | None = None) -> Intent:
     if _looks_like_file_search(text, lowered, quoted=quoted, path=path):
         search_path = _extract_search_path(text, defaults=_default_search_roots(text, lowered))
         search_kind = "directory" if ("目录" in text or "directory" in lowered or "directories" in lowered) else "file"
-        if "包含" in text or "content" in lowered or "grep" in lowered:
+        if "包含" in text or "content" in lowered or "containing" in lowered or "grep" in lowered:
             pattern = _default_content_pattern(text, quoted)
             operation = "content_search"
             entities = {"path": search_path, "pattern": pattern}
@@ -352,10 +446,10 @@ def parse_objective(objective: str, workflow_hint: str | None = None) -> Intent:
             workflow_hint,
         )
 
-    if any(token in text for token in PROCESS_HINTS_ZH) or any(token in lowered for token in ("port", "process", "memory", "systemctl", "lsof", "netstat", "ss ")):
+    if _looks_like_process_request(text, lowered):
         port = _extract_port(text)
         service = _extract_service(text)
-        if "内存最多" in text or "memory" in lowered:
+        if "内存最多" in text or "内存占用" in text or "memory" in lowered:
             operation = "top_memory"
         elif port is not None:
             operation = "port_lookup"
@@ -376,3 +470,48 @@ def parse_objective(objective: str, workflow_hint: str | None = None) -> Intent:
         )
 
     raise ValueError("Could not map the request to a supported Linux operations workflow.")
+
+
+def resolve_objective(
+    objective: str,
+    workflow_hint: str | None = None,
+    *,
+    normalizer: Any | None = None,
+    fallback_agent: Any | None = None,
+) -> IntentResolution:
+    try:
+        intent = parse_objective(objective, workflow_hint=workflow_hint)
+    except ValueError as exc:
+        resolved = IntentResolution(
+            status="unsupported",
+            intent=None,
+            reason=str(exc),
+            source="local_rule",
+        )
+        if normalizer is not None:
+            try:
+                normalized = normalizer.normalize(objective=objective, workflow_hint=workflow_hint)
+            except Exception:
+                normalized = None
+            if normalized is not None:
+                if normalized.status == "supported":
+                    return normalized
+                resolved = normalized
+        if fallback_agent is None:
+            return resolved
+        try:
+            researched = fallback_agent.research(
+                objective=objective,
+                workflow_hint=workflow_hint,
+                prior_reason=resolved.reason,
+                prior_source=resolved.source,
+            )
+        except Exception:
+            return resolved
+        return researched
+    return IntentResolution(
+        status="supported",
+        intent=intent,
+        reason=intent.rationale,
+        source="local_rule",
+    )

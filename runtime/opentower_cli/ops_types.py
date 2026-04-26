@@ -5,6 +5,7 @@ from typing import Any, Literal
 
 
 Decision = Literal["allow", "confirm", "block"]
+ResolutionStatus = Literal["supported", "unsupported"]
 
 
 @dataclass(frozen=True)
@@ -15,6 +16,14 @@ class Intent:
     entities: dict[str, Any] = field(default_factory=dict)
     confidence: float = 0.0
     rationale: str = ""
+
+
+@dataclass(frozen=True)
+class IntentResolution:
+    status: ResolutionStatus
+    intent: Intent | None = None
+    reason: str = ""
+    source: str = "local_rule"
 
 
 @dataclass(frozen=True)
@@ -66,4 +75,3 @@ class AgentTurn:
     agent_id: str
     title: str
     output_text: str
-

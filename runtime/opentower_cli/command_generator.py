@@ -50,6 +50,42 @@ def plan_commands(intent: Intent, assessment: SecurityAssessment) -> CommandPlan
         )
 
     if intent.workflow_id == "file-search":
+        if intent.operation == "tail_log":
+            path = str(intent.entities.get("path") or "/var/log/syslog")
+            line_count = int(intent.entities.get("line_count") or 100)
+            return CommandPlan(
+                workflow_id=intent.workflow_id,
+                operation=intent.operation,
+                summary="Tail the requested log file safely.",
+                parser_kind="log",
+                execution_commands=[
+                    PlannedCommand(
+                        name="tail-log",
+                        description="Read the latest lines from the requested log file.",
+                        command=f"tail -n {line_count} -- {_q(path)} 2>/dev/null",
+                        allowed_returncodes=(0, 1),
+                    )
+                ],
+            )
+
+        if intent.operation == "recent_error_scan":
+            path = str(intent.entities.get("path") or "/var/log/syslog")
+            limit = int(intent.entities.get("limit") or 50)
+            return CommandPlan(
+                workflow_id=intent.workflow_id,
+                operation=intent.operation,
+                summary="Scan recent error lines from the requested log file.",
+                parser_kind="log",
+                execution_commands=[
+                    PlannedCommand(
+                        name="recent-error-scan",
+                        description="Read recent error-like lines from the requested log file.",
+                        command=f"grep -i -E 'error|fail|crit|panic|fatal|denied' {_q(path)} 2>/dev/null | tail -n {limit}",
+                        allowed_returncodes=(0, 1),
+                    )
+                ],
+            )
+
         if intent.operation == "inspect_permissions":
             path = str(intent.entities.get("path") or "/")
             return CommandPlan(
@@ -139,6 +175,51 @@ def plan_commands(intent: Intent, assessment: SecurityAssessment) -> CommandPlan
         )
 
     if intent.workflow_id == "process-port-inspection":
+        if intent.operation == "top_cpu":
+            return CommandPlan(
+                workflow_id=intent.workflow_id,
+                operation=intent.operation,
+                summary="Inspect CPU-heavy processes.",
+                parser_kind="process",
+                execution_commands=[
+                    PlannedCommand(
+                        name="top-cpu",
+                        description="List top CPU consumers.",
+                        command="ps aux --sort=-%cpu | head -6",
+                    )
+                ],
+            )
+
+        if intent.operation == "load_average":
+            return CommandPlan(
+                workflow_id=intent.workflow_id,
+                operation=intent.operation,
+                summary="Inspect system load average.",
+                parser_kind="process",
+                execution_commands=[
+                    PlannedCommand(
+                        name="load-average",
+                        description="Show system load average.",
+                        command="uptime",
+                    )
+                ],
+            )
+
+        if intent.operation == "uptime_summary":
+            return CommandPlan(
+                workflow_id=intent.workflow_id,
+                operation=intent.operation,
+                summary="Inspect system uptime.",
+                parser_kind="process",
+                execution_commands=[
+                    PlannedCommand(
+                        name="uptime-summary",
+                        description="Show system uptime summary.",
+                        command="uptime",
+                    )
+                ],
+            )
+
         if intent.operation == "port_lookup":
             port = int(intent.entities.get("port") or 80)
             command = f"lsof -i :{port} 2>/dev/null || ss -ltnp 2>/dev/null | grep ':{port} ' || netstat -tulnp 2>/dev/null | grep ':{port}'"
@@ -172,7 +253,7 @@ def plan_commands(intent: Intent, assessment: SecurityAssessment) -> CommandPlan
             )
 
         service = str(intent.entities.get("service") or "nginx")
-        command = f"systemctl status {_q(service)} --no-pager 2>/dev/null || ps aux | grep -i -- {_q(service)} | grep -v grep"
+        command = f"systemctl status {_q(service)} --no-pager 2>/dev/null || ps -C {_q(service)} -o pid=,comm=,args= 2>/dev/null"
         return CommandPlan(
             workflow_id=intent.workflow_id,
             operation=intent.operation,

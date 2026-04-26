@@ -7,7 +7,9 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from .intent_parser import parse_objective
+from .feedback_agent import format_unsupported_response
+from .intent_parser import resolve_objective
+from .ops_types import Intent
 from .runtime_layout import RuntimeLayout, repo_runtime_layout
 
 
@@ -21,6 +23,11 @@ class DispatchResult:
     handoff_chain: list[str]
     acceptance_checks: list[str]
     log_file: Path
+    resolution_status: str = "supported"
+    resolution_reason: str = ""
+    resolution_source: str = "local_rule"
+    user_message: str = ""
+    intent: Intent | None = None
 
 
 def _utc_now() -> datetime:
@@ -58,27 +65,95 @@ def dispatch(
     root: Path,
     workflow_id: str | None = None,
     runtime_layout: RuntimeLayout | None = None,
+    intent_normalizer: Any | None = None,
+    fallback_research_agent: Any | None = None,
 ) -> DispatchResult:
-    intent = parse_objective(objective, workflow_hint=workflow_id)
-    workflow = workflow_config(skills_cfg, intent.workflow_id)
-
     now = _utc_now()
     run_id = f"run-{now.strftime('%Y%m%d-%H%M%S')}-{uuid4().hex[:6]}"
     layout = runtime_layout or repo_runtime_layout(root)
     layout.ensure_dirs()
     log_file = layout.log_file(run_id)
+    resolution = resolve_objective(
+        objective,
+        workflow_hint=workflow_id,
+        normalizer=intent_normalizer,
+        fallback_agent=fallback_research_agent,
+    )
 
+    if resolution.status == "supported":
+        intent = resolution.intent
+        if intent is None:
+            raise ValueError("Supported resolution is missing intent.")
+        workflow = workflow_config(skills_cfg, intent.workflow_id)
+
+        payload = {
+            "run_id": run_id,
+            "timestamp_utc": now.isoformat(),
+            "objective": objective,
+            "workflow_id": intent.workflow_id,
+            "category": workflow.get("category"),
+            "routed_operation": intent.operation,
+            "intent_entities": intent.entities,
+            "acceptance_checks": workflow.get("acceptance_checks", []),
+            "default_agents": workflow.get("default_agents", []),
+            "handoff_chain": workflow.get("handoff_chain", []),
+            "resolution_status": resolution.status,
+            "resolution_reason": resolution.reason,
+            "resolution_source": resolution.source,
+            "runtime_context": layout.describe(),
+        }
+        log_file.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+        layout.active_file.write_text(
+            "\n".join(
+                [
+                    "# Active Session",
+                    "",
+                    f"- run_id: {run_id}",
+                    f"- workflow_id: {intent.workflow_id}",
+                    f"- category: {workflow.get('category', '-')}",
+                    f"- routed_operation: {intent.operation}",
+                    f"- objective: {objective}",
+                    f"- resolution_status: {resolution.status}",
+                    f"- handoff_chain: {', '.join(workflow.get('handoff_chain', []))}",
+                    f"- acceptance_checks: {', '.join(workflow.get('acceptance_checks', []))}",
+                    f"- log_file: {log_file.as_posix()}",
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        return DispatchResult(
+            run_id=run_id,
+            workflow_id=intent.workflow_id,
+            objective=objective,
+            category=str(workflow.get("category", "")).strip(),
+            agents=list(workflow.get("default_agents", [])),
+            handoff_chain=list(workflow.get("handoff_chain", [])),
+            acceptance_checks=list(workflow.get("acceptance_checks", [])),
+            log_file=log_file,
+            resolution_status=resolution.status,
+            resolution_reason=resolution.reason,
+            resolution_source=resolution.source,
+            intent=intent,
+        )
+
+    user_message = format_unsupported_response(objective=objective, reason=resolution.reason)
     payload = {
         "run_id": run_id,
         "timestamp_utc": now.isoformat(),
         "objective": objective,
-        "workflow_id": intent.workflow_id,
-        "category": workflow.get("category"),
-        "routed_operation": intent.operation,
-        "intent_entities": intent.entities,
-        "acceptance_checks": workflow.get("acceptance_checks", []),
-        "default_agents": workflow.get("default_agents", []),
-        "handoff_chain": workflow.get("handoff_chain", []),
+        "workflow_id": "unsupported",
+        "category": "unsupported",
+        "routed_operation": None,
+        "intent_entities": {},
+        "acceptance_checks": [],
+        "default_agents": ["intent-parser"],
+        "handoff_chain": ["intent-parser"],
+        "resolution_status": resolution.status,
+        "resolution_reason": resolution.reason,
+        "resolution_source": resolution.source,
         "runtime_context": layout.describe(),
     }
     log_file.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
@@ -89,12 +164,12 @@ def dispatch(
                 "# Active Session",
                 "",
                 f"- run_id: {run_id}",
-                f"- workflow_id: {intent.workflow_id}",
-                f"- category: {workflow.get('category', '-')}",
-                f"- routed_operation: {intent.operation}",
+                "- workflow_id: unsupported",
+                "- category: unsupported",
+                "- routed_operation: -",
                 f"- objective: {objective}",
-                f"- handoff_chain: {', '.join(workflow.get('handoff_chain', []))}",
-                f"- acceptance_checks: {', '.join(workflow.get('acceptance_checks', []))}",
+                f"- resolution_status: {resolution.status}",
+                f"- resolution_reason: {resolution.reason}",
                 f"- log_file: {log_file.as_posix()}",
             ]
         )
@@ -104,11 +179,16 @@ def dispatch(
 
     return DispatchResult(
         run_id=run_id,
-        workflow_id=intent.workflow_id,
+        workflow_id="unsupported",
         objective=objective,
-        category=str(workflow.get("category", "")).strip(),
-        agents=list(workflow.get("default_agents", [])),
-        handoff_chain=list(workflow.get("handoff_chain", [])),
-        acceptance_checks=list(workflow.get("acceptance_checks", [])),
+        category="unsupported",
+        agents=["intent-parser"],
+        handoff_chain=["intent-parser"],
+        acceptance_checks=[],
         log_file=log_file,
+        resolution_status=resolution.status,
+        resolution_reason=resolution.reason,
+        resolution_source=resolution.source,
+        user_message=user_message,
+        intent=None,
     )

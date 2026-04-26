@@ -211,6 +211,7 @@ def execute_workflow(
     run_id: str,
     runtime_layout: RuntimeLayout | None = None,
     progress_callback: ProgressCallback | None = None,
+    intent: Intent | None = None,
     **_: Any,
 ) -> WorkflowExecutionResult:
     layout = runtime_layout or repo_runtime_layout(repo_root)
@@ -230,7 +231,7 @@ def execute_workflow(
         },
     )
 
-    intent = parse_objective(objective, workflow_hint=str(workflow_cfg.get("id", "")).strip() or None)
+    intent = intent or parse_objective(objective, workflow_hint=str(workflow_cfg.get("id", "")).strip() or None)
     _emit(progress_callback, {"event": "turn_started", "run_id": run_id, "turn_index": 1, "turn_count": len(handoff), "agent_id": handoff[0]})
     turns.append(_agent_turn("intent-parser", "Intent Parser", _intent_summary(intent)))
     _emit(progress_callback, {"event": "turn_completed", "run_id": run_id, "turn_index": 1, "turn_count": len(handoff), "agent_id": handoff[0]})

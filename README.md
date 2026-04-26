@@ -1,13 +1,10 @@
 # OpenTower Linux Ops
 
-CLI-first Linux operations system built around a fixed multi-agent workflow:
+OpenTower is a CLI-first Linux operations assistant that routes natural-language requests into a fixed, auditable workflow. This repository intentionally keeps the product surface narrow: a small set of Linux inspection and user-management tasks, model-assisted recovery for in-scope paraphrases, and explicit structured rejection for unsupported or risky requests.
 
-- `intent-parser`
-- `security-guard`
-- `command-planner`
-- `result-analyst`
+## Command Surface
 
-The project is intentionally narrow. The shipped product surface is:
+The shipped user-facing commands are:
 
 - `workflow`
 - `dispatch`
@@ -15,118 +12,146 @@ The project is intentionally narrow. The shipped product surface is:
 - `provider-status`
 - `auth`
 
-## What It Supports
+Natural-language input is the default entrypoint:
 
-The first release implements the required hackathon baseline:
+```bash
+python -m opentower_cli "show disk usage"
+python -m opentower_cli "find nginx config files"
+python -m opentower_cli "check sshd service status"
+python -m opentower_cli "show cpu usage"
+```
 
-- Disk and storage inspection
-- File and directory search
-- Process and port inspection
-- Normal user creation / deletion / group updates
-- High-risk action blocking
-- Secondary confirmation for dangerous but recoverable actions
-
-Examples:
+Slash-prefixed commands remain available:
 
 ```bash
 python -m opentower_cli /workflow
-python -m opentower_cli dispatch --objective "查看磁盘使用情况" --execute
-python -m opentower_cli dispatch --objective "找到所有 nginx 配置文件" --execute
-python -m opentower_cli dispatch --objective "哪些进程占用 80 端口" --execute
-python -m opentower_cli dispatch --objective "创建一个名为 dev01 的用户并加入 docker 组" --execute
+python -m opentower_cli /provider-status
+python -m opentower_cli /auth
 ```
 
-High-risk examples:
+## Routing Model
 
-```bash
-python -m opentower_cli dispatch --objective "删除 /etc 目录" --execute
-python -m opentower_cli dispatch --objective "给所有文件 777 权限" --execute
-python -m opentower_cli dispatch --objective "删除所有测试用户" --execute
-```
+Requests move through a three-stage routing chain:
 
-If a request requires confirmation, the tool returns a `confirmation_id`. Resolve it with:
+1. `local_rule`: deterministic parser for the shipped Linux ops workflows.
+2. `llm_normalizer`: remaps in-scope paraphrases onto already-implemented operations.
+3. `fallback_research`: low-risk, read-only recovery for a small set of runtime inspection tasks.
 
-```bash
-python -m opentower_cli dispatch --confirmation-id <id> --answer yes --reason "approved maintenance"
-python -m opentower_cli dispatch --confirmation-id <id> --answer no
-```
+Every dispatch result now exposes:
 
-## Setup
+- `resolution_status`
+- `resolution_source`
+- `resolution_reason`
+
+This keeps unsupported behavior explicit instead of failing with a raw parser error.
+
+## Supported Workflows
+
+- `disk-inspection`
+  - `disk_usage`
+  - `disk_usage_with_logs`
+- `file-search`
+  - `filename_search`
+  - `content_search`
+  - `inspect_permissions`
+  - `tail_log` (read-only fallback)
+  - `recent_error_scan` (read-only fallback)
+  - `delete_path` and `chmod_recursive` remain guarded by the security layer
+- `process-port-inspection`
+  - `port_lookup`
+  - `top_memory`
+  - `service_status`
+  - `top_cpu` (read-only fallback)
+  - `load_average` (read-only fallback)
+  - `uptime_summary` (read-only fallback)
+- `user-management`
+  - `list_users`
+  - `inspect_user`
+  - `create_user`
+  - `add_user_to_group`
+  - `delete_user`
+  - `batch_delete_users`
+
+## Safety Policy
+
+- High-risk writes are blocked or forced through explicit confirmation.
+- The fallback research path is read-only by design.
+- Requests such as `restart nginx service`, `install nginx`, `reboot the machine`, and firewall/package-management actions remain unsupported.
+- Log-tail requests no longer misroute into destructive permission-changing operations.
+
+## Provider Setup
+
+Install the package in editable mode:
 
 ```bash
 python -m pip install -e .[dev]
 ```
 
-Prepare local provider configuration first:
+Create a local provider profile:
 
 ```bash
 cp auth.example.json auth.json
 ```
 
-Then edit the repository-root `auth.json` and fill the active provider, model, `api_base_url`, and `api_key`.
+On PowerShell:
 
-Notes:
-
-- `auth.example.json` is the committed template
-- `auth.json` is the local runtime file actually used by the CLI
-- `auth.json` is ignored by Git and should not be pushed
-- If `auth.json` is missing, the CLI can also generate a template automatically on first launch
-
-Verify configuration with:
-
-```bash
-python -m opentower_cli /auth
-python -m opentower_cli /provider-status
+```powershell
+Copy-Item auth.example.json auth.json
 ```
 
-Competition design document:
+Then edit `auth.json` and fill in the provider, model, API base URL, and API key you actually want to use.
 
-- `比赛版设计说明文档.md`
-
-## Fastest Path
-
-The top-level CLI is natural-language-first. You can run common tasks directly:
+Useful checks:
 
 ```bash
-python -m opentower_cli 查看磁盘使用情况
-python -m opentower_cli 找到所有 nginx 配置文件
-python -m opentower_cli 哪些进程占用 80 端口
-python -m opentower_cli 创建一个名为 dev01 的用户并加入 docker 组
-```
-
-Use slash-prefixed input only when you want explicit command mode:
-
-```bash
-python -m opentower_cli /workflow
-python -m opentower_cli /provider-status
-python -m opentower_cli /auth
-```
-
-## Console
-
-```bash
-python -m opentower_cli console
-```
-
-The console prefers local routing for common Linux ops requests and can fall back to the configured provider router when needed.
-Natural language is the default input mode. Use slash commands such as `/workflow`, `/provider-status`, and `/auth` only when you want explicit CLI control.
-
-## GitHub Upload Notes
-
-- Keep `auth.example.json` in the repository and keep `auth.json` local only
-- Do not push local runtime artifacts under `production/`
-- The primary Chinese entry points for reviewers are [README_CN.md](README_CN.md) and [比赛版设计说明文档.md](比赛版设计说明文档.md)
-
-## Provider Check
-
-```bash
+python -m opentower_cli auth
 python -m opentower_cli provider-status
 ```
 
-Provider configuration is still supported for console routing or future prompt-based extensions, but the core Linux execution path is deterministic and rule-driven.
+Notes:
+
+- `auth.example.json` is the committed template.
+- `auth.json` is local-only and already ignored by Git.
+- For `openai-compatible` endpoints, OpenTower can auto-select a chat-capable model when `model` is omitted and the provider exposes `/models`. This helps with DeepSeek-compatible deployments.
+
+## Example Requests
+
+Direct natural-language entry:
+
+```bash
+python -m opentower_cli "show disk usage"
+python -m opentower_cli "search for database in /etc"
+python -m opentower_cli "check sshd service status"
+python -m opentower_cli "show cpu usage"
+python -m opentower_cli "show load average"
+python -m opentower_cli "tail the latest syslog log"
+```
+
+Explicit dispatch:
+
+```bash
+python -m opentower_cli dispatch --objective "show cpu usage" --execute
+python -m opentower_cli dispatch --objective "check sshd service status" --execute
+python -m opentower_cli dispatch --objective "restart nginx service" --execute
+```
+
+The last example is expected to return `resolution_status: unsupported`.
 
 ## Verification
 
-```bash
-python -m pytest -q
-```
+Current local verification for the `2026-04-26` snapshot:
+
+- `python -m pytest -q` -> `81 passed`
+- `python scripts/run_nl_eval.py` -> `509/509 passed`
+- Read-only WSL smoke validated:
+  - `show cpu usage`
+  - `show load average`
+  - `tail the latest syslog log`
+  - `check sshd service status`
+  - safe deny: `restart nginx service`
+
+## Repo Notes
+
+- Commit `auth.example.json`, not `auth.json`.
+- Runtime outputs under `production/` are local artifacts unless you intentionally want to version them.
+- Chinese project notes live in [README_CN.md](README_CN.md).

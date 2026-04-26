@@ -12,6 +12,8 @@ from .anthropic_client import AnthropicMessageResponse, ProviderError
 DEFAULT_MODEL = "gpt-4o-mini"
 DEFAULT_BASE_URL = "https://api.openai.com/v1/chat/completions"
 DEFAULT_REQUEST_TIMEOUT_SECONDS = 90.0
+_NON_CHAT_MODEL_TOKENS = ("embedding", "rerank", "tts", "speech", "whisper", "moderation", "image", "vision")
+_PREFERRED_CHAT_MODEL_TOKENS = ("flash", "mini", "small", "lite", "chat", "instruct", "turbo")
 
 
 class OpenAICompatibleError(ProviderError):
@@ -31,6 +33,13 @@ def normalize_base_url(base_url: str | None = None) -> str:
     if normalized.endswith("/v1"):
         return normalized + "/chat/completions"
     return normalized + "/v1/chat/completions"
+
+
+def normalize_models_url(base_url: str | None = None) -> str:
+    chat_url = normalize_base_url(base_url)
+    if chat_url.endswith("/chat/completions"):
+        return chat_url[: -len("/chat/completions")] + "/models"
+    return chat_url.rstrip("/") + "/models"
 
 
 def _request_timeout_seconds(timeout_seconds: float | None = None) -> float:
@@ -85,12 +94,82 @@ def _choice_text(choice: dict[str, Any]) -> str:
     return ""
 
 
+def _coerce_available_models(data: dict[str, Any]) -> list[str]:
+    rows = data.get("data", [])
+    if not isinstance(rows, list):
+        return []
+    seen: set[str] = set()
+    models: list[str] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        model_id = str(row.get("id", "") or "").strip()
+        if not model_id or model_id in seen:
+            continue
+        seen.add(model_id)
+        models.append(model_id)
+    return models
+
+
+def _select_chat_model(available_models: list[str]) -> str:
+    if not available_models:
+        return DEFAULT_MODEL
+
+    filtered = [
+        model
+        for model in available_models
+        if not any(token in model.lower() for token in _NON_CHAT_MODEL_TOKENS)
+    ]
+    candidates = filtered or available_models
+
+    for token in _PREFERRED_CHAT_MODEL_TOKENS:
+        for model in candidates:
+            if token in model.lower():
+                return model
+    return candidates[0]
+
+
+def list_models(
+    *,
+    api_url: str | None = None,
+    api_key: str | None = None,
+    timeout_seconds: float | None = None,
+) -> list[str]:
+    resolved_api_key = (
+        api_key
+        or os.environ.get("OPENTOWER_OPENAI_API_KEY", "").strip()
+        or os.environ.get("OPENAI_API_KEY", "").strip()
+    )
+    if not resolved_api_key:
+        raise OpenAICompatibleError("Missing OPENAI_API_KEY")
+
+    req = request.Request(
+        normalize_models_url(api_url),
+        headers={
+            "content-type": "application/json",
+            "authorization": f"Bearer {resolved_api_key}",
+        },
+        method="GET",
+    )
+    try:
+        with request.urlopen(req, timeout=_request_timeout_seconds(timeout_seconds)) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+    except error.HTTPError as exc:
+        raw = exc.read().decode("utf-8", errors="replace")
+        raise OpenAICompatibleError(f"OpenAI-compatible model listing HTTP {exc.code}: {raw}") from exc
+    except error.URLError as exc:
+        raise OpenAICompatibleError(f"OpenAI-compatible model listing connection error: {exc.reason}") from exc
+    return _coerce_available_models(data if isinstance(data, dict) else {})
+
+
 @dataclass(frozen=True)
 class OpenAICompatibleStatus:
     api_url: str
     configured_model: str
     api_key_present: bool
     execute_ready: bool
+    model_available: bool | None = None
+    available_models: list[str] | None = None
     status_detail: str | None = None
 
 
@@ -101,24 +180,46 @@ def provider_status(
     api_key: str | None = None,
 ) -> OpenAICompatibleStatus:
     resolved_api_url = normalize_base_url(api_url)
-    resolved_model = (
+    configured_model = (
         model
         or os.environ.get("OPENTOWER_OPENAI_MODEL", "").strip()
         or os.environ.get("OPENAI_MODEL", "").strip()
-        or DEFAULT_MODEL
     )
     resolved_api_key = (
         api_key
         or os.environ.get("OPENTOWER_OPENAI_API_KEY", "").strip()
         or os.environ.get("OPENAI_API_KEY", "").strip()
     )
-    ready = bool(resolved_api_url and resolved_model and resolved_api_key)
+    available_models: list[str] | None = None
+    model_available: bool | None = None
+    ready = bool(resolved_api_url and resolved_api_key)
     detail = None if ready else "Missing OPENAI_API_KEY-compatible credentials."
+    resolved_model = configured_model or DEFAULT_MODEL
+    if ready:
+        try:
+            available_models = list_models(api_url=resolved_api_url, api_key=resolved_api_key)
+        except OpenAICompatibleError as exc:
+            detail = str(exc)
+        else:
+            if configured_model:
+                model_available = configured_model in available_models
+                if model_available is False:
+                    detail = f"Configured model '{configured_model}' was not found in provider model list."
+                    ready = False
+            elif available_models:
+                resolved_model = _select_chat_model(available_models)
+                model_available = True
+                detail = f"No explicit model configured; auto-selected '{resolved_model}'."
+            else:
+                detail = "Provider model list is empty."
+                ready = False
     return OpenAICompatibleStatus(
         api_url=resolved_api_url,
         configured_model=resolved_model,
         api_key_present=bool(resolved_api_key),
         execute_ready=ready,
+        model_available=model_available,
+        available_models=available_models,
         status_detail=detail,
     )
 
@@ -140,8 +241,31 @@ class OpenAICompatibleMessagesClient:
             or os.environ.get("OPENAI_API_KEY", "").strip()
         )
         self.timeout_seconds = _request_timeout_seconds(timeout_seconds)
+        self._autodiscovered_model: str | None = None
         if not self.api_key:
             raise OpenAICompatibleError("Missing OPENAI_API_KEY")
+
+    def _resolve_model(self, model: str | None = None) -> str:
+        configured_model = (
+            model
+            or os.environ.get("OPENTOWER_OPENAI_MODEL", "").strip()
+            or os.environ.get("OPENAI_MODEL", "").strip()
+        )
+        if configured_model:
+            return configured_model
+        if self._autodiscovered_model:
+            return self._autodiscovered_model
+        try:
+            available_models = list_models(
+                api_url=self.api_url,
+                api_key=self.api_key,
+                timeout_seconds=self.timeout_seconds,
+            )
+        except OpenAICompatibleError:
+            self._autodiscovered_model = DEFAULT_MODEL
+            return self._autodiscovered_model
+        self._autodiscovered_model = _select_chat_model(available_models)
+        return self._autodiscovered_model
 
     def create_message(
         self,
@@ -152,12 +276,7 @@ class OpenAICompatibleMessagesClient:
         max_tokens: int = 1400,
         temperature: float = 0.2,
     ) -> AnthropicMessageResponse:
-        resolved_model = (
-            model
-            or os.environ.get("OPENTOWER_OPENAI_MODEL", "").strip()
-            or os.environ.get("OPENAI_MODEL", "").strip()
-            or DEFAULT_MODEL
-        )
+        resolved_model = self._resolve_model(model)
         messages = []
         if system.strip():
             messages.append({"role": "system", "content": system})
