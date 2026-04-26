@@ -54,3 +54,19 @@ def test_plan_commands_uses_directory_search_when_requested() -> None:
     assert plan.parser_kind == "file-search"
     assert len(plan.execution_commands) == 1
     assert plan.execution_commands[0].command == "find /var -type d -name '*cache*' 2>/dev/null"
+
+
+def test_plan_commands_service_status_avoids_matching_the_dispatch_command_itself() -> None:
+    plan = plan_commands(
+        Intent(
+            workflow_id="process-port-inspection",
+            operation="service_status",
+            objective="check sshd service status",
+            entities={"service": "sshd"},
+        ),
+        _allow_assessment(),
+    )
+
+    assert plan.parser_kind == "process"
+    assert len(plan.execution_commands) == 1
+    assert plan.execution_commands[0].command == "systemctl status sshd --no-pager 2>/dev/null || ps -C sshd -o pid=,comm=,args= 2>/dev/null"

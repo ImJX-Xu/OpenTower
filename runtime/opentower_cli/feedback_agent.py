@@ -82,6 +82,21 @@ def format_confirmation_response(
     return "\n".join(lines)
 
 
+def format_unsupported_response(*, objective: str, reason: str) -> str:
+    lines = [
+        "Request is outside the current implemented Linux ops scope. No commands were executed.",
+        f"objective: {objective}",
+        f"reason: {reason}",
+        "currently_supported:",
+        "- disk inspection",
+        "- file and config search",
+        "- process, port, and service status inspection",
+        "- user management with safety checks",
+        "suggestion: rewrite the request as a concrete disk, file, process, port, service-status, or user-management task.",
+    ]
+    return "\n".join(lines)
+
+
 def _format_disk_summary(results: list[CommandExecution], warning_threshold: int) -> str:
     df_output = next((result.stdout for result in results if result.name == "disk-usage"), "")
     partitions: list[str] = []
@@ -118,6 +133,42 @@ def _format_file_summary(results: list[CommandExecution], intent: Intent) -> str
     lines = [f"找到 {len(matches)} 条相关结果:"]
     lines.extend(f"- {item}" for item in matches[:20])
     return "\n".join(lines)
+
+
+def _format_log_summary(results: list[CommandExecution], intent: Intent) -> str:
+    lines = [line.strip() for result in results for line in result.stdout.splitlines() if line.strip()]
+    path = str(intent.entities.get("path") or "-")
+    if not lines:
+        if intent.operation == "recent_error_scan":
+            return f"No recent error lines were found in `{path}`."
+        return f"No readable log lines were returned from `{path}`."
+    heading = "Recent error lines" if intent.operation == "recent_error_scan" else "Recent log lines"
+    rendered = [f"{heading} from `{path}`:"]
+    rendered.extend(f"- {line}" for line in lines[:20])
+    return "\n".join(rendered)
+
+
+def _format_process_summary_readable(results: list[CommandExecution], intent: Intent) -> str:
+    lines = [line.strip() for result in results for line in result.stdout.splitlines() if line.strip()]
+    if not lines:
+        if intent.operation == "port_lookup":
+            return f"No process is currently listening on port {intent.entities.get('port')}."
+        if intent.operation == "service_status":
+            service = str(intent.entities.get("service") or "-")
+            return f"No matching service or process information was returned for `{service}`."
+        return "No matching process or service information was returned."
+    if intent.operation == "top_cpu":
+        return "Top CPU processes:\n" + "\n".join(f"- {line}" for line in lines[:20])
+    if intent.operation == "top_memory":
+        return "Top memory processes:\n" + "\n".join(f"- {line}" for line in lines[:20])
+    if intent.operation == "load_average":
+        return "Load average summary:\n" + "\n".join(f"- {line}" for line in lines[:5])
+    if intent.operation == "uptime_summary":
+        return "Uptime summary:\n" + "\n".join(f"- {line}" for line in lines[:5])
+    if intent.operation == "service_status":
+        service = str(intent.entities.get("service") or "-")
+        return f"Service or process status for `{service}`:\n" + "\n".join(f"- {line}" for line in lines[:20])
+    return _format_process_summary(results, intent)
 
 
 def _format_process_summary(results: list[CommandExecution], intent: Intent) -> str:
@@ -168,8 +219,10 @@ def format_execution_response(
         return _format_disk_summary(results, warning_threshold)
     if plan.parser_kind == "file-search":
         return _format_file_summary(results, intent)
+    if plan.parser_kind == "log":
+        return _format_log_summary(results, intent)
     if plan.parser_kind == "process":
-        return _format_process_summary(results, intent)
+        return _format_process_summary_readable(results, intent)
     if plan.parser_kind == "user-management":
         return _format_user_summary(results, intent)
     if plan.parser_kind == "chmod":

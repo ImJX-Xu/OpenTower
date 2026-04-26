@@ -104,8 +104,8 @@ def openai_compatible_provider_status() -> ProviderStatus:
         configured_model=status.configured_model or OPENAI_COMPATIBLE_DEFAULT_MODEL,
         configured_opus_model="",
         execute_ready=status.execute_ready,
-        model_available=None,
-        available_models=None,
+        model_available=status.model_available,
+        available_models=status.available_models,
         status_detail=status.status_detail,
     )
 

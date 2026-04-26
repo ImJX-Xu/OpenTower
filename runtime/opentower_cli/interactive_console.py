@@ -9,10 +9,9 @@ from pathlib import Path
 from typing import Any, Callable, Sequence
 
 from .anthropic_client import AnthropicMessagesClient, ProviderError
-from .intent_parser import parse_objective
+from .intent_parser import resolve_objective
 from .ollama_client import DEFAULT_MODEL as OLLAMA_DEFAULT_MODEL
 from .ollama_client import OllamaMessagesClient
-from .openai_compatible_client import DEFAULT_MODEL as OPENAI_COMPATIBLE_DEFAULT_MODEL
 from .openai_compatible_client import OpenAICompatibleMessagesClient
 from .provider_runtime import normalize_provider_name
 
@@ -20,7 +19,7 @@ from .provider_runtime import normalize_provider_name
 CommandRunner = Callable[[Sequence[str] | None], int]
 EmitFn = Callable[[str], None]
 InputFn = Callable[[str], str]
-RouterFactory = Callable[["ConsoleDefaults"], tuple[Any, str]]
+RouterFactory = Callable[["ConsoleDefaults"], tuple[Any, str | None]]
 
 _DEFAULT_KEY_ALIASES = {
     "provider": "provider",
@@ -123,7 +122,7 @@ def _default_router_factory(defaults: ConsoleDefaults) -> tuple[Any, str]:
     if provider == "openai-compatible":
         return (
             OpenAICompatibleMessagesClient(api_url=defaults.api_base_url or None, api_key=defaults.api_key or None),
-            defaults.model or os.environ.get("OPENTOWER_OPENAI_MODEL", "").strip() or OPENAI_COMPATIBLE_DEFAULT_MODEL,
+            defaults.model or os.environ.get("OPENTOWER_OPENAI_MODEL", "").strip() or None,
         )
     return (
         AnthropicMessagesClient(api_key=defaults.api_key or os.environ.get("ANTHROPIC_API_KEY")),
@@ -288,6 +287,9 @@ class InteractiveConsole:
         try:
             payload = self._route_text(text)
         except (ProviderError, ValueError) as exc:
+            resolution = resolve_objective(text)
+            if resolution.status == "unsupported":
+                return self._execute_command(["dispatch", "--objective", text, "--execute"], announce_route=True)
             self.emit(f"Routing error: {exc}")
             self.emit("Use /dispatch --objective \"...\" --execute or /workflow directly.")
             return True
@@ -303,12 +305,10 @@ class InteractiveConsole:
             return {"action": "run_command", "command": ["workflow"]}
         if "provider" in lowered or "模型状态" in text or "api key" in lowered:
             return {"action": "run_command", "command": ["provider-status"]}
-        try:
-            parse_objective(text)
-        except ValueError:
-            return None
-        else:
+        resolution = resolve_objective(text)
+        if resolution.status == "supported":
             return {"action": "run_command", "command": ["dispatch", "--objective", text, "--execute"]}
+        return None
 
     def _route_text(self, text: str) -> dict[str, Any]:
         client, model = self.router_factory(self.defaults)

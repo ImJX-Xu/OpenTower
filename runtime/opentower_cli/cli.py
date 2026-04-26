@@ -374,6 +374,14 @@ def main(argv: Sequence[str] | None = None, *, apply_startup_defaults: bool = Tr
             print(f"handoff: {' -> '.join(result.handoff_chain)}")
             print(f"checks: {', '.join(result.acceptance_checks)}")
             print(f"log_file: {result.log_file}")
+            resolution_status = str(getattr(result, "resolution_status", "supported"))
+            resolution_source = str(getattr(result, "resolution_source", "local_rule") or "").strip() or "local_rule"
+            resolution_reason = str(getattr(result, "resolution_reason", "") or "").strip()
+            user_message = str(getattr(result, "user_message", "") or "").strip()
+            print(f"resolution_status: {resolution_status}")
+            print(f"resolution_source: {resolution_source}")
+            if resolution_reason:
+                print(f"resolution_reason: {resolution_reason}")
             if bundle.execution_result is not None:
                 execution = bundle.execution_result
                 print(f"status: {execution.status}")
@@ -384,6 +392,9 @@ def main(argv: Sequence[str] | None = None, *, apply_startup_defaults: bool = Tr
                 print(f"group_chat_file: {execution.group_chat_file}")
                 print("")
                 print(execution.final_output)
+            elif user_message:
+                print("")
+                print(user_message)
             return 0
 
         if args.command is None:

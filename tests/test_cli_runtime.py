@@ -7,7 +7,7 @@ from types import SimpleNamespace
 from opentower_cli import cli as cli_mod
 from opentower_cli.config_loader import load_system_config, load_workflows_catalog, validate_repository_integrity
 from opentower_cli.engine import dispatch
-from opentower_cli.ops_types import CommandExecution
+from opentower_cli.ops_types import CommandExecution, Intent, IntentResolution
 from opentower_cli.runtime_layout import repo_runtime_layout
 from opentower_cli.workflow_executor import execute_workflow, resolve_confirmation
 
@@ -50,6 +50,67 @@ def test_dispatch_writes_log(tmp_path) -> None:
     payload = json.loads(result.log_file.read_text(encoding="utf-8"))
     assert payload["workflow_id"] == "file-search"
     assert payload["routed_operation"] == "filename_search"
+
+
+def test_dispatch_returns_structured_unsupported_result(tmp_path) -> None:
+    source_root = repo_root()
+    system = load_system_config(source_root)
+    workflows = load_workflows_catalog(source_root)
+
+    result = dispatch(
+        system_cfg=system,
+        skills_cfg=workflows,
+        objective="show cpu usage",
+        root=tmp_path,
+    )
+
+    assert result.workflow_id == "unsupported"
+    assert result.category == "unsupported"
+    assert result.resolution_status == "unsupported"
+    assert result.resolution_source == "local_rule"
+    assert "outside the current implemented Linux ops scope" in result.user_message
+
+    payload = json.loads(result.log_file.read_text(encoding="utf-8"))
+    assert payload["workflow_id"] == "unsupported"
+    assert payload["resolution_status"] == "unsupported"
+
+
+def test_dispatch_uses_intent_normalizer_when_local_rules_do_not_map(tmp_path) -> None:
+    source_root = repo_root()
+    system = load_system_config(source_root)
+    workflows = load_workflows_catalog(source_root)
+
+    class FakeNormalizer:
+        def normalize(self, *, objective: str, workflow_hint: str | None = None) -> IntentResolution:
+            return IntentResolution(
+                status="supported",
+                source="llm_normalizer",
+                reason="Mapped by fake normalizer.",
+                intent=Intent(
+                    workflow_id="process-port-inspection",
+                    operation="service_status",
+                    objective=objective,
+                    entities={"service": "nginx"},
+                    confidence=0.88,
+                    rationale="Mapped by fake normalizer.",
+                ),
+            )
+
+    result = dispatch(
+        system_cfg=system,
+        skills_cfg=workflows,
+        objective="check nginx service status",
+        root=tmp_path,
+        intent_normalizer=FakeNormalizer(),
+    )
+
+    assert result.workflow_id == "process-port-inspection"
+    assert result.resolution_status == "supported"
+    assert result.resolution_source == "llm_normalizer"
+
+    payload = json.loads(result.log_file.read_text(encoding="utf-8"))
+    assert payload["workflow_id"] == "process-port-inspection"
+    assert payload["resolution_source"] == "llm_normalizer"
 
 
 def test_execute_workflow_blocks_critical_delete(tmp_path) -> None:
@@ -277,3 +338,36 @@ def test_main_accepts_slash_prefixed_provider_status(monkeypatch, capsys, tmp_pa
     assert rc == 0
     assert "provider: anthropic" in output
     assert "auth_file:" in output
+
+
+def test_main_prints_structured_unsupported_message(monkeypatch, capsys, tmp_path) -> None:
+    monkeypatch.setattr(cli_mod, "_repo_root", lambda: tmp_path)
+
+    fake_bundle = SimpleNamespace(
+        dispatch_result=SimpleNamespace(
+            run_id="run-unsupported",
+            workflow_id="unsupported",
+            category="unsupported",
+            agents=["intent-parser"],
+            handoff_chain=["intent-parser"],
+            acceptance_checks=[],
+            log_file=tmp_path / "run-unsupported.json",
+            resolution_status="unsupported",
+            resolution_source="llm_normalizer",
+            resolution_reason="Could not map the request to a supported Linux operations workflow.",
+            user_message="Request is outside the current implemented Linux ops scope.",
+        ),
+        execution_result=None,
+    )
+
+    monkeypatch.setattr(cli_mod, "load_runtime_bundle", lambda *, root: SimpleNamespace())
+    monkeypatch.setattr(cli_mod, "dispatch_and_maybe_execute", lambda **kwargs: fake_bundle)
+
+    rc = cli_mod.main(["show cpu usage"], apply_startup_defaults=False)
+    output = capsys.readouterr().out
+
+    assert rc == 0
+    assert "workflow_id: unsupported" in output
+    assert "resolution_status: unsupported" in output
+    assert "resolution_source: llm_normalizer" in output
+    assert "Request is outside the current implemented Linux ops scope." in output
